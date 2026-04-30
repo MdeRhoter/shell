@@ -134,6 +134,12 @@ ColumnLayout {
                 }
             }
             DelegateChoice {
+                roleValue: "workspaceName"
+                delegate: WrappedLoader {
+                    sourceComponent: WorkspaceName {}
+                }
+            }
+            DelegateChoice {
                 roleValue: "activeWindow"
                 delegate: WrappedLoader {
                     Layout.fillWidth: true
