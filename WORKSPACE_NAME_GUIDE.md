@@ -111,10 +111,35 @@ After adding the component to your configuration:
 
 ## Troubleshooting
 
-**Component not showing:**
+**Component not showing after restart:**
+The Caelestia Control Center may have a cached state. To fix:
+
+1. Verify the entry exists in config:
+   ```bash
+   jq '.bar.entries[] | select(.id == "workspaceName")' ~/.config/caelestia/shell.json
+   ```
+   It should show: `{"enabled": true, "id": "workspaceName"}`
+
+2. If missing, re-add it (adjust position as needed):
+   ```bash
+   jq '.bar.entries |= (.[0:2] + [{"id": "workspaceName", "enabled": true}] + .[2:])' ~/.config/caelestia/shell.json > /tmp/shell.json && mv /tmp/shell.json ~/.config/caelestia/shell.json
+   ```
+
+3. Force restart Caelestia:
+   ```bash
+   qs -c caelestia kill && sleep 0.5 && caelestia shell -d &
+   ```
+
+4. If still not showing, check logs:
+   ```bash
+   caelestia shell -l 2>&1 | grep -i "workspace\|error"
+   ```
+
+**Component not showing (initial):**
 - Make sure `"enabled": true` is set in shell.json
-- Check that shell.json is valid JSON
+- Check that shell.json is valid JSON (`jq . ~/.config/caelestia/shell.json`)
 - Look for errors in `caelestia shell -l` logs
+- Verify component is installed: `ls -la /etc/xdg/quickshell/caelestia/modules/bar/components/WorkspaceName.qml`
 
 **Wrong workspace name:**
 - The component reads from `Hypr.focusedWorkspace.name`
@@ -125,3 +150,9 @@ After adding the component to your configuration:
 - The component follows Caelestia's Material 3 theme
 - Check Tokens and Colours are available
 - Rebuild if you modified the QML: `cmake --build build && sudo cmake --install build`
+
+**Persistence after Control Center changes:**
+If the component disappears after using Control Center settings:
+- This was fixed by adding workspaceName to the C++ defaults in `barconfig.hpp`
+- If you're using an older build, rebuild with: `cd ~/.config/quickshell/caelestia && cmake --build build && sudo cmake --install build`
+- The component should now persist through Control Center changes
