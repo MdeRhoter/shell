@@ -88,11 +88,23 @@ activeWindow → spacer → tray → clock → statusIcons → power
 
 ## Restarting after changes
 
-For any QML change, restart Quickshell:
+Caelestia runs as a systemd user service (`caelestia.service`) with `Restart=on-failure` so it
+auto-recovers from crashes (e.g. the hyprlock/Wayland output-flap issue).
+
 ```bash
-pkill -f "qs.*caelestia" && qs -p ~/.config/quickshell/caelestia/shell.qml &
+# Restart after config/code changes
+systemctl --user restart caelestia.service
+
+# Check status / recent logs
+systemctl --user status caelestia.service
+journalctl --user -u caelestia.service -f
+
+# Stop permanently (won't auto-restart)
+systemctl --user stop caelestia.service
 ```
-Or use the Hyprland keybinding (`Super+Ctrl+Shift+Q` by default).
+
+Or use the Hyprland keybinding (`Super+Ctrl+Shift+Q` by default) — it restarts the process,
+and systemd will bring it back up after the `RestartSec=2` delay.
 
 Quickshell's `watchFiles: true` means many edits hot-reload automatically without a full restart.
 
@@ -127,7 +139,7 @@ These files were modified locally and are the most likely sources of merge confl
 
 No rebuild is needed unless upstream changed C++ files. Restart Quickshell:
 ```bash
-pkill -f "qs.*caelestia" && qs -p ~/.config/quickshell/caelestia/shell.qml &
+systemctl --user restart caelestia.service
 ```
 
 ### When a plugin rebuild is needed
