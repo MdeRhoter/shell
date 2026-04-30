@@ -10,15 +10,42 @@ StyledRect {
 
     readonly property color colour: Colours.palette.m3secondary
     readonly property int padding: Tokens.padding.normal
-    readonly property string workspaceName: {
-        const name = Hypr.focusedWorkspace?.name ?? "";
-        // For numbered workspaces, just return the number
-        if (name.match(/^\d+$/))
-            return name;
-        // For special workspaces (special:name), show just the name
-        if (name.startsWith("special:"))
-            return name.substring(8);
-        return name || "1";
+    
+    // Get workspace group letter based on workspace ID
+    readonly property string workspaceGroup: {
+        const wsId = Hypr.activeWsId;
+        if (wsId >= 1 && wsId <= 3) return "W";  // Work
+        if (wsId >= 4 && wsId <= 6) return "M";  // Music
+        if (wsId >= 7 && wsId <= 9) return "P";  // Personal
+        return wsId.toString();
+    }
+    
+    // Count windows in special workspaces
+    readonly property int specialCount: {
+        let count = 0;
+        const toplevels = Hypr.toplevels.values;
+        for (const toplevel of toplevels) {
+            if (toplevel.workspace?.name.startsWith("special:"))
+                count++;
+        }
+        return count;
+    }
+    
+    // Generate tooltip with special workspace windows
+    readonly property string specialTooltip: {
+        if (specialCount === 0)
+            return "Special workspace is empty";
+        
+        const toplevels = Hypr.toplevels.values;
+        let apps = [];
+        for (const toplevel of toplevels) {
+            if (toplevel.workspace?.name.startsWith("special:")) {
+                const className = toplevel.lastIpcObject.class || "Unknown";
+                const title = toplevel.title || "No title";
+                apps.push(`• ${className}: ${title}`);
+            }
+        }
+        return apps.join("\n");
     }
 
     implicitWidth: Tokens.sizes.bar.innerWidth
@@ -26,6 +53,40 @@ StyledRect {
 
     color: Qt.alpha(Colours.tPalette.m3surfaceContainer, Colours.tPalette.m3surfaceContainer.a)
     radius: Tokens.rounding.full
+
+    MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        
+        onClicked: {
+            // Toggle special workspace on largest landscape monitor
+            const monitors = Hypr.monitors.values;
+            let largestMonitor = null;
+            let maxPixels = 0;
+            
+            for (const monitor of monitors) {
+                if (monitor.transform === 0) {  // Landscape (0° rotation)
+                    const pixels = monitor.width * monitor.height;
+                    if (pixels > maxPixels) {
+                        maxPixels = pixels;
+                        largestMonitor = monitor;
+                    }
+                }
+            }
+            
+            if (largestMonitor) {
+                Hypr.dispatch(`focusmonitor ${largestMonitor.name}`);
+                Hypr.dispatch("togglespecialworkspace magic");
+            }
+        }
+        
+        ToolTip {
+            visible: parent.containsMouse && root.specialCount > 0
+            text: root.specialTooltip
+            delay: 500
+        }
+    }
 
     Column {
         id: layout
@@ -54,10 +115,24 @@ StyledRect {
             anchors.horizontalCenter: parent.horizontalCenter
 
             horizontalAlignment: StyledText.AlignHCenter
-            text: root.workspaceName
-            font.pointSize: Tokens.font.size.small
+            text: root.workspaceGroup
+            font.pointSize: Tokens.font.size.normal
             font.family: Tokens.font.family.sans
+            font.weight: Font.Bold
             color: root.colour
+        }
+        
+        // Special workspace counter (only shown when > 0)
+        StyledText {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.specialCount > 0
+            
+            horizontalAlignment: StyledText.AlignHCenter
+            text: `(${root.specialCount})`
+            font.pointSize: Tokens.font.size.smaller
+            font.family: Tokens.font.family.mono
+            color: root.colour
+            opacity: 0.8
         }
     }
 
