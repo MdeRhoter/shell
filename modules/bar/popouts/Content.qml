@@ -126,6 +126,11 @@ Item {
             sourceComponent: LockStatus {}
         }
 
+        Popout {
+            name: "workspaceName"
+            sourceComponent: WorkspaceInfo {}
+        }
+
         Repeater {
             model: ScriptModel {
                 values: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))

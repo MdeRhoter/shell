@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import Caelestia.Config
 import qs.components
 import qs.services
@@ -32,23 +31,6 @@ StyledRect {
         return count;
     }
     
-    // Generate tooltip with special workspace windows
-    readonly property string specialTooltip: {
-        if (specialCount === 0)
-            return "Special workspace is empty";
-        
-        const toplevels = Hypr.toplevels.values;
-        let apps = [];
-        for (const toplevel of toplevels) {
-            if (toplevel.workspace?.name.startsWith("special:")) {
-                const className = toplevel.lastIpcObject.class || "Unknown";
-                const title = toplevel.title || "No title";
-                apps.push(`• ${className}: ${title}`);
-            }
-        }
-        return apps.join("\n");
-    }
-
     implicitWidth: Tokens.sizes.bar.innerWidth
     implicitHeight: layout.implicitHeight + root.padding * 2
 
@@ -57,17 +39,10 @@ StyledRect {
 
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        
+
         onClicked: {
             Hypr.dispatch("togglespecialworkspace magic");
-        }
-        
-        ToolTip {
-            visible: parent.containsMouse && root.specialCount > 0
-            text: root.specialTooltip
-            delay: 500
         }
     }
 
