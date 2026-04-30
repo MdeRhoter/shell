@@ -61,25 +61,7 @@ StyledRect {
         cursorShape: Qt.PointingHandCursor
         
         onClicked: {
-            // Toggle special workspace on largest landscape monitor
-            const monitors = Hypr.monitors.values;
-            let largestMonitor = null;
-            let maxPixels = 0;
-            
-            for (const monitor of monitors) {
-                if (monitor.transform === 0) {  // Landscape (0° rotation)
-                    const pixels = monitor.width * monitor.height;
-                    if (pixels > maxPixels) {
-                        maxPixels = pixels;
-                        largestMonitor = monitor;
-                    }
-                }
-            }
-            
-            if (largestMonitor) {
-                Hypr.dispatch(`focusmonitor ${largestMonitor.name}`);
-                Hypr.dispatch("togglespecialworkspace magic");
-            }
+            Hypr.dispatch("togglespecialworkspace magic");
         }
         
         ToolTip {
