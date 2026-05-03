@@ -23,7 +23,7 @@ StyledRect {
         cursorShape: Qt.PointingHandCursor
 
         onClicked: {
-            Quickshell.execDetached([...GlobalConfig.general.apps.terminal, "-e", "garuda-update"]);
+            Quickshell.execDetached([...GlobalConfig.general.apps.terminal, "-e", "eos-update"]);
         }
     }
 

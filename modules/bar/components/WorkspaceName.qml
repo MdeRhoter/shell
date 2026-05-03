@@ -11,14 +11,8 @@ StyledRect {
     readonly property color colour: Colours.palette.m3secondary
     readonly property int padding: Tokens.padding.normal
     
-    // Get workspace group letter based on workspace ID
-    readonly property string workspaceGroup: {
-        const wsId = Hypr.activeWsId;
-        if (wsId >= 1 && wsId <= 3) return "W";  // Work
-        if (wsId >= 4 && wsId <= 6) return "M";  // Music
-        if (wsId >= 7 && wsId <= 9) return "P";  // Personal
-        return wsId.toString();
-    }
+    // Show the current workspace number
+    readonly property string workspaceGroup: Hypr.activeWsId.toString()
     
     // Count windows in special workspaces
     readonly property int specialCount: {
