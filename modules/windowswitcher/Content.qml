@@ -18,7 +18,7 @@ Item {
 
     readonly property var filteredWindows: {
         const all = Hypr.toplevels.values
-            .filter(t => !t.workspace?.name.startsWith("special:"))
+            .filter(t => t.workspace != null && !t.workspace.name.startsWith("special:"))
             .sort((a, b) => (a.workspace?.id ?? 0) - (b.workspace?.id ?? 0));
 
         const q = search.text.toLowerCase().trim();
