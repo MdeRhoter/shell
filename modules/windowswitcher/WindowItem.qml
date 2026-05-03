@@ -62,7 +62,7 @@ Item {
             id: appIcon
 
             asynchronous: true
-            source: Quickshell.iconPath(root.window.lastIpcObject.class.toLowerCase(), "application-x-executable")
+            source: Icons.getAppIcon(root.window.lastIpcObject.class, "application-x-executable")
             implicitSize: parent.height * 0.7
 
             anchors.verticalCenter: parent.verticalCenter
