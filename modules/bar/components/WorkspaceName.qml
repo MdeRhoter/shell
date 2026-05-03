@@ -11,8 +11,7 @@ StyledRect {
     readonly property color colour: Colours.palette.m3secondary
     readonly property int padding: Tokens.padding.normal
     
-    // Show the current workspace number
-    readonly property string workspaceGroup: Hypr.activeWsId.toString()
+    readonly property string workspaceGroup: WorkspaceNameConfig.labelForWorkspace(Hypr.activeWsId)
     
     // Count windows in special workspaces
     readonly property int specialCount: {
@@ -36,7 +35,7 @@ StyledRect {
         cursorShape: Qt.PointingHandCursor
 
         onClicked: {
-            Hypr.dispatch("togglespecialworkspace magic");
+            Hypr.dispatch("togglespecialworkspace " + WorkspaceNameConfig.specialWorkspace);
         }
     }
 
@@ -48,6 +47,7 @@ StyledRect {
 
         MaterialIcon {
             anchors.horizontalCenter: parent.horizontalCenter
+            visible: WorkspaceNameConfig.showIcon
 
             text: "workspaces"
             color: root.colour
@@ -56,6 +56,7 @@ StyledRect {
 
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
+            visible: WorkspaceNameConfig.showIcon
             height: 1
 
             width: parent.width * 0.8
@@ -74,10 +75,9 @@ StyledRect {
             color: root.colour
         }
         
-        // Special workspace counter (only shown when > 0)
         StyledText {
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: root.specialCount > 0
+            visible: WorkspaceNameConfig.showSpecialCount && root.specialCount > 0
             
             horizontalAlignment: StyledText.AlignHCenter
             text: `(${root.specialCount})`

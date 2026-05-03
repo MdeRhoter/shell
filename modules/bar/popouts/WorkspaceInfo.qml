@@ -10,13 +10,7 @@ ColumnLayout {
 
     spacing: Tokens.spacing.normal
 
-    readonly property string groupLabel: {
-        const wsId = Hypr.activeWsId;
-        if (wsId >= 1 && wsId <= 3) return qsTr("Work (1\u20133)");
-        if (wsId >= 4 && wsId <= 6) return qsTr("Music (4\u20136)");
-        if (wsId >= 7 && wsId <= 9) return qsTr("Personal (7\u20139)");
-        return qsTr("Workspace %1").arg(wsId);
-    }
+    readonly property string groupLabel: WorkspaceNameConfig.nameForWorkspace(Hypr.activeWsId)
 
     readonly property var specialWindows: Hypr.toplevels.values.filter(t => t.workspace?.name.startsWith("special:"))
 
