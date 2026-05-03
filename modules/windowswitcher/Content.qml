@@ -75,6 +75,18 @@ Item {
             Keys.onDownPressed: list.incrementCurrentIndex()
             Keys.onEscapePressed: root.visibilities.windowswitcher = false
 
+            Keys.onPressed: event => {
+                const digit = parseInt(event.text);
+                if (digit >= 1 && digit <= 9) {
+                    const win = root.filteredWindows.find(w => w.workspace?.id === digit);
+                    if (win) {
+                        Hypr.dispatch("focuswindow address:" + win.lastIpcObject.address);
+                        root.visibilities.windowswitcher = false;
+                        event.accepted = true;
+                    }
+                }
+            }
+
             onAccepted: {
                 const win = root.filteredWindows[list.currentIndex];
                 if (win) {
