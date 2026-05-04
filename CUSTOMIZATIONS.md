@@ -99,11 +99,23 @@ activeWindow → spacer → tray → clock → statusIcons → power
 ---
 
 ## Locking workflow
-Hyprland session locking uses `hyprlock` via `hypridle`. Key design decisions learned the hard way:
-**`lock_cmd = hyprlock || hyprlock`** — no `pidof` prefix. The original `pidof hyprlock || hyprlock` allowed zombie hyprlock processes (crashed but not exited) to silently block all new lock attempts. The `ext_session_lock_v1` protocol handles duplicates correctly — a new `hyprlock` that tries to lock when another already holds it receives `finished` immediately and exits cleanly.
-**`misc:allow_session_lock_restore = true`** in `hyprland.conf` — when hyprlock crashes without calling `unlock_and_destroy()` (which happens on the S3 wake monitor re-enumeration crash), Hyprland normally keeps the session permanently locked and rejects all new lockers. This flag allows a new locker to reclaim the orphaned lock.
-**`after_sleep_cmd = ~/.config/hypr/scripts/resume-lock.sh`** — on S3 wake, DP monitors re-enumerate in two waves (~t=1s and ~t=22s, stable by ~t=35s). Starting hyprlock during this window causes it to crash on stale Wayland output references. The script requires 10 consecutive seconds of stable monitor state AND at least 35 seconds since wake before starting hyprlock.
-**Lock keybind** (`Super+Ctrl+L`) uses only `global caelestia:lock` — a duplicate `exec loginctl lock-session` bind on the same key sends two Lock signals per keypress, causing zombie build-up over time.
+Session locking is handled by **Caelestia's built-in `WlSessionLock`** (in `modules/lock/Lock.qml`), not by a separate hyprlock process. All lock/unlock operations go through Quickshell IPC.
+**`lock_cmd = qs ipc -p ~/.config/quickshell/caelestia/shell.qml call lock lock`**
+Triggered by hypridle when the session should be locked. Calls Caelestia's IPC `lock` target directly. The `ext_session_lock_v1` protocol handles the case where the session is already locked — a second call is a no-op. No `pidof` guard needed and no zombie processes possible since there is no separate locker binary.
+**`before_sleep_cmd`** uses the same IPC call — if the session was already locked by the idle timer this is a no-op, if not it locks before the system suspends.
+**`after_sleep_cmd = ~/.config/hypr/scripts/resume-lock.sh`**
+On S3 wake, DP monitors briefly re-enumerate (outputs removed and re-added). Caelestia's `WlSessionLock` survives sleep and re-creates lock surfaces for the new output IDs automatically. The script waits 10 seconds of monitor stability (much shorter than the 35s needed for hyprlock), then checks `isLocked()` via IPC — if still locked it exits immediately. Only re-locks if Caelestia somehow lost the lock AND logind still shows `LockedHint=yes`.
+**Lock keybind** (`Super+Ctrl+L`) uses only `global caelestia:lock` — a duplicate `exec loginctl lock-session` bind on the same key sends two Lock signals per keypress, causing double invocations.
+**`misc:allow_session_lock_restore = true`** in `hyprland.conf` — kept as a safety net. During the ~3 seconds that DP outputs are being recycled on wake, Caelestia has no lock surfaces for the new output IDs, so Hyprland briefly shows a "locker died" info screen. Caelestia immediately creates surfaces for the new outputs and recovers. Without this flag the transition would be a silent black screen (slightly better UX) but if Caelestia truly crashed the session would be permanently locked with no recovery path. This is a known upstream Hyprland limitation (tracked in hyprlock issue #726).
+**IPC syntax:**
+```bash
+# Lock
+qs ipc -p ~/.config/quickshell/caelestia/shell.qml call lock lock
+# Unlock (for scripting/TTY recovery)
+qs ipc -p ~/.config/quickshell/caelestia/shell.qml call lock unlock
+# Check state
+qs ipc -p ~/.config/quickshell/caelestia/shell.qml call lock isLocked  # → true/false
+```
 ---
 ## Restarting after changes
 
@@ -200,6 +212,37 @@ sudo cmake --install build
 
 6. Add to `shell.json` entries and `barconfig.hpp` defaults.
 
+---
+
+## GPU, sleep and power (HX99G-specific)
+### Hardware
+Two AMD GPUs in a hybrid graphics configuration:
+- `0000:e8:00.0` — Ryzen iGPU (Raphael, drives Hyprland)
+- `0000:03:00.0` — RX 6600 XT / DIMGREY_CAVEFISH (discrete, drives the three monitors)
+Driver stack: `amdgpu` kernel module, Mesa 26.x, `vulkan-radeon` (RADV). No proprietary AMD drivers.
+### S3 sleep and the GPU mode1 reset
+The amdgpu driver performs a **mode1 reset** of the RX 6600 XT during the S3 suspend path. On wake, GPU-accelerated apps that hold an active GPU context (Brave, etc.) will normally crash if the GPU is reset multiple times in quick succession.
+The root cause of repeated resets was **`suspend-then-hibernate`**: systemd 260 maps `systemctl suspend` to `suspend-then-hibernate` by default on systems with a configured swap/resume partition. Each S3 cycle triggered a GPU reset; if the reset caused the system to wake immediately (before hibernation), systemd would retry, causing a reset loop.
+**Fixes applied:**
+- `/etc/systemd/logind.conf.d/sleep-operation.conf` — `SleepOperation=suspend` forces plain S3, no retry loop
+- `suspend-then-hibernate.target`, `hibernate.target`, `hybrid-sleep.target` masked via `systemctl mask`
+- With a single clean S3 cycle, GPU-accelerated apps survive the wake (Brave tested successfully)
+### Caelestia lock screen on S3 wake
+Caelestia's `WlSessionLock` (backed by Quickshell / Qt Wayland) is significantly more resilient to the DP monitor re-enumeration that occurs on S3 wake than standalone hyprlock was:
+- **hyprlock** held raw Wayland output object pointers; when outputs were removed/re-added it hit a null-pointer assertion and crashed
+- **Caelestia** re-creates lock surfaces for each new output ID automatically; the `WlSessionLock` object itself survives sleep intact
+A brief (~3s) "locker died" info screen from Hyprland appears while Caelestia creates surfaces for the new output IDs. This is a cosmetic issue tracked in upstream Hyprland issue #726. The session content is never exposed during this window.
+### hypridle configuration
+See `~/.config/hypr/hypridle.conf`. Key timers:
+- **150s** — dim brightness
+- **600s** — lock screen (via `loginctl lock-session` → lock_cmd → Caelestia IPC)
+- **900s** — DPMS off (`Super+F12` toggles manually)
+- **1800s** — `systemctl suspend` (plain S3)
+### Idle power consumption (baseline, no special amdgpu params)
+- iGPU / CPU package: ~12 W
+- RX 6600 XT idle (three monitors active): ~22 W
+- Estimated total system: ~44–48 W
+Note: `amdgpu.runpm=0 amdgpu.gfxoff=0` kernel params halve dGPU idle power (~11 W) but are not needed for stability since the suspend-then-hibernate loop was the real cause of GPU resets.
 ---
 
 ## Pushing to origin
