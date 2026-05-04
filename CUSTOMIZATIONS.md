@@ -48,11 +48,23 @@ Shows the active workspace **group** (W / M / P) based on waybar-style grouping:
 | M | 4–6 (Music) |
 | P | 7–9 (Personal) |
 
-When windows are in `special:magic`, a count badge appears below the group letter. The fly-out lists those windows (`ClassName: Title`). Clicking toggles the `special:magic` workspace.
-
+When windows are in `special:magic`, a count badge appears below the group letter. The fly-out lists those windows (`ClassName: Title`). Clicking toggles the special workspace.
 **Files:**
 - `modules/bar/components/WorkspaceName.qml` — bar component
 - `modules/bar/popouts/WorkspaceInfo.qml` — fly-out content
+- `services/WorkspaceNameConfig.qml` — configurable singleton (groups, labels, special workspace name)
+**Optional config:** `~/.config/caelestia/workspacename.json` overrides defaults at runtime without touching QML:
+```json
+{
+  "grouping": {
+    "enabled": true,
+    "groups":     [{"from": 1, "to": 3, "label": "W"}, {"from": 4, "to": 6, "label": "M"}, {"from": 7, "to": 9, "label": "P"}],
+    "groupNames": [{"from": 1, "to": 3, "name": "Work (1–3)"},  {"from": 4, "to": 6, "name": "Music (4–6)"},  {"from": 7, "to": 9, "name": "Personal (7–9)"}]
+  },
+  "showIcon": true,
+  "showSpecialCount": true,
+  "specialWorkspace": "magic"
+}
 
 **Data source:** `Quickshell.Hyprland` (Hypr service, no custom singleton needed)
 
@@ -86,6 +98,13 @@ activeWindow → spacer → tray → clock → statusIcons → power
 
 ---
 
+## Locking workflow
+Hyprland session locking uses `hyprlock` via `hypridle`. Key design decisions learned the hard way:
+**`lock_cmd = hyprlock || hyprlock`** — no `pidof` prefix. The original `pidof hyprlock || hyprlock` allowed zombie hyprlock processes (crashed but not exited) to silently block all new lock attempts. The `ext_session_lock_v1` protocol handles duplicates correctly — a new `hyprlock` that tries to lock when another already holds it receives `finished` immediately and exits cleanly.
+**`misc:allow_session_lock_restore = true`** in `hyprland.conf` — when hyprlock crashes without calling `unlock_and_destroy()` (which happens on the S3 wake monitor re-enumeration crash), Hyprland normally keeps the session permanently locked and rejects all new lockers. This flag allows a new locker to reclaim the orphaned lock.
+**`after_sleep_cmd = ~/.config/hypr/scripts/resume-lock.sh`** — on S3 wake, DP monitors re-enumerate in two waves (~t=1s and ~t=22s, stable by ~t=35s). Starting hyprlock during this window causes it to crash on stale Wayland output references. The script requires 10 consecutive seconds of stable monitor state AND at least 35 seconds since wake before starting hyprlock.
+**Lock keybind** (`Super+Ctrl+L`) uses only `global caelestia:lock` — a duplicate `exec loginctl lock-session` bind on the same key sends two Lock signals per keypress, causing zombie build-up over time.
+---
 ## Restarting after changes
 
 Caelestia runs as a systemd user service (`caelestia.service`) with `Restart=on-failure` so it
