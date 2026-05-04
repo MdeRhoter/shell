@@ -231,7 +231,7 @@ The root cause of repeated resets was **`suspend-then-hibernate`**: systemd 260 
 Caelestia's `WlSessionLock` (backed by Quickshell / Qt Wayland) is significantly more resilient to the DP monitor re-enumeration that occurs on S3 wake than standalone hyprlock was:
 - **hyprlock** held raw Wayland output object pointers; when outputs were removed/re-added it hit a null-pointer assertion and crashed
 - **Caelestia** re-creates lock surfaces for each new output ID automatically; the `WlSessionLock` object itself survives sleep intact
-A brief (~3s) "locker died" info screen from Hyprland appears while Caelestia creates surfaces for the new output IDs. This is a cosmetic issue tracked in [hyprlock#726](https://github.com/hyprwm/hyprlock/issues/726). The session content is never exposed during this window.
+A brief (~3s) "locker died" info screen from Hyprland appears while Caelestia creates surfaces for the new output IDs. This is a cosmetic issue caused by Hyprland showing its fallback screen during the ~3s window between the output being re-created and Caelestia providing a lock surface for it. The session content is never exposed during this window.
 ### hypridle configuration
 See `~/.config/hypr/hypridle.conf`. Key timers:
 - **150s** — dim brightness
