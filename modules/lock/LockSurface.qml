@@ -14,7 +14,19 @@ WlSessionLockSurface {
     required property Pam pam
 
     readonly property alias unlocking: unlockAnim.running
-    readonly property bool isLandscape: (root.screen?.width ?? 0) >= (root.screen?.height ?? 1)
+    // Computed once on creation so it doesn't flip to false when screen
+    // goes null during surface teardown, which would deactivate the Content
+    // Loader mid-incubation and cause "Object or context destroyed" warnings.
+    property bool isLandscape: false
+    Component.onCompleted: {
+        // Set orientation once while screen is guaranteed non-null.
+        // A live binding would flip isLandscape to false when screen goes
+        // null during surface teardown, deactivating the Content Loader
+        // mid-incubation. Also start initAnim here so its `to:` expressions
+        // read the correct isLandscape value (running:true fires too early).
+        isLandscape = screen.width >= screen.height;
+        initAnim.start();
+    }
 
     contentItem.Config.screen: screen.name
     contentItem.Tokens.screen: screen.name
@@ -88,8 +100,6 @@ WlSessionLockSurface {
 
     ParallelAnimation {
         id: initAnim
-
-        running: true
 
         Anim {
             target: background
