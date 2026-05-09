@@ -18,15 +18,24 @@ WlSessionLockSurface {
     // goes null during surface teardown, which would deactivate the Content
     // Loader mid-incubation and cause "Object or context destroyed" warnings.
     property bool isLandscape: false
-    Component.onCompleted: {
-        // Set orientation once while screen is guaranteed non-null.
-        // A live binding would flip isLandscape to false when screen goes
-        // null during surface teardown, deactivating the Content Loader
-        // mid-incubation. Also start initAnim here so its `to:` expressions
-        // read the correct isLandscape value (running:true fires too early).
-        isLandscape = screen.width >= screen.height;
-        initAnim.start();
+
+    // Set isLandscape once and start initAnim when the screen is available.
+    // We cannot use a live binding: it would flip to false when screen goes
+    // null during surface teardown, deactivating the Content Loader while
+    // sub-components are still incubating.
+    // We cannot use Component.onCompleted alone: Quickshell may assign screen
+    // after onCompleted fires, in which case screen.width throws a TypeError
+    // and initAnim never starts – leaving an invisible lock surface.
+    // Solution: try in both onCompleted and onScreenChanged; the guard
+    // !initAnim.running ensures we init at most once.
+    function _initForScreen(): void {
+        if (screen !== null && !initAnim.running) {
+            isLandscape = screen.width >= screen.height;
+            initAnim.start();
+        }
     }
+    Component.onCompleted: _initForScreen()
+    onScreenChanged: _initForScreen()
 
     contentItem.Config.screen: screen.name
     contentItem.Tokens.screen: screen.name
