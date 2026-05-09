@@ -230,6 +230,19 @@ StyledRect {
             }
         }
 
+        // Keep Awake indicator (visible only when active)
+        WrappedLoader {
+            name: "idleInhibitor"
+            active: IdleInhibitor.enabled
+
+            sourceComponent: MaterialIcon {
+                animate: true
+                text: "coffee"
+                color: Colours.palette.m3primary
+                fill: 1
+            }
+        }
+
         // Battery icon
         WrappedLoader {
             name: "battery"

@@ -127,6 +127,11 @@ Item {
         }
 
         Popout {
+            name: "idleInhibitor"
+            sourceComponent: KeepAwake {}
+        }
+
+        Popout {
             name: "workspaceName"
             sourceComponent: WorkspaceInfo {}
         }
