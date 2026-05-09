@@ -15,16 +15,16 @@ Singleton {
 
     // Array of { from, to, label } — label shown in the bar widget.
     readonly property var groups: _cfg.grouping?.groups ?? [
-        { "from": 1, "to": 3, "label": "W" },
-        { "from": 4, "to": 6, "label": "M" },
-        { "from": 7, "to": 9, "label": "P" }
+        { "from": 1, "to": 2, "label": "W" },
+        { "from": 3, "to": 4, "label": "M" },
+        { "from": 5, "to": 6, "label": "P" }
     ]
 
     // Array of { from, to, name } — full name shown in the hover popout.
     readonly property var groupNames: _cfg.grouping?.groupNames ?? [
-        { "from": 1, "to": 3, "name": "Work (1\u20133)" },
-        { "from": 4, "to": 6, "name": "Music (4\u20136)" },
-        { "from": 7, "to": 9, "name": "Personal (7\u20139)" }
+        { "from": 1, "to": 2, "name": "Work (1\u20132)" },
+        { "from": 3, "to": 4, "name": "Music (3\u20134)" },
+        { "from": 5, "to": 6, "name": "Personal (5\u20136)" }
     ]
 
     // Label shown when no group matches the active workspace.
