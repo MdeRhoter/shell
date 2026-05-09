@@ -14,6 +14,7 @@ WlSessionLockSurface {
     required property Pam pam
 
     readonly property alias unlocking: unlockAnim.running
+    readonly property bool isLandscape: (root.screen?.width ?? 0) >= (root.screen?.height ?? 1)
 
     contentItem.Config.screen: screen.name
     contentItem.Tokens.screen: screen.name
@@ -44,13 +45,13 @@ WlSessionLockSurface {
                 to: lockContent.radius
             }
             Anim {
-                target: content
+                target: contentLoader
                 property: "scale"
                 to: 0
                 type: Anim.DefaultSpatial
             }
             Anim {
-                target: content
+                target: contentLoader
                 property: "opacity"
                 to: 0
                 type: Anim.StandardSmall
@@ -122,34 +123,38 @@ WlSessionLockSurface {
                 Anim {
                     target: lockIcon
                     property: "opacity"
-                    to: 0
+                    to: root.isLandscape ? 0 : 1
                 }
                 Anim {
-                    target: content
+                    target: contentLoader
                     property: "opacity"
-                    to: 1
+                    to: root.isLandscape ? 1 : 0
                 }
                 Anim {
-                    target: content
+                    target: contentLoader
                     property: "scale"
-                    to: 1
+                    to: root.isLandscape ? 1 : 0
                     type: Anim.DefaultSpatial
                 }
                 Anim {
                     target: lockBg
                     property: "radius"
-                    to: lockContent.Tokens.rounding.large * 1.5
+                    to: root.isLandscape ? lockContent.Tokens.rounding.large * 1.5 : lockContent.radius
                 }
                 Anim {
                     target: lockContent
                     property: "implicitWidth"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * lockContent.Tokens.sizes.lock.ratio
+                    to: root.isLandscape
+                        ? (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * lockContent.Tokens.sizes.lock.ratio
+                        : lockContent.size
                     type: Anim.DefaultSpatial
                 }
                 Anim {
                     target: lockContent
                     property: "implicitHeight"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult
+                    to: root.isLandscape
+                        ? (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult
+                        : lockContent.size
                     type: Anim.DefaultSpatial
                 }
             }
@@ -212,14 +217,18 @@ WlSessionLockSurface {
             rotation: 180
         }
 
-        Content {
-            id: content
+        Loader {
+            id: contentLoader
 
             anchors.centerIn: parent
-            width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * Tokens.sizes.lock.ratio - Tokens.padding.large * 2
-            height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult - Tokens.padding.large * 2
+            active: root.isLandscape
 
-            lock: root
+            sourceComponent: Content {
+                width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * Tokens.sizes.lock.ratio - Tokens.padding.large * 2
+                height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult - Tokens.padding.large * 2
+                lock: root
+            }
+
             opacity: 0
             scale: 0
         }
