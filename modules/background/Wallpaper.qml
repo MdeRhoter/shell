@@ -119,28 +119,23 @@ Item {
 
         anchors.fill: parent
 
-        opacity: 0
-        scale: Wallpapers.showPreview ? 1 : 0.8
+        opacity: root.current === img ? 1 : 0
+        scale: root.current === img ? 1 : (Wallpapers.showPreview ? 1 : 0.8)
 
         onStatusChanged: {
             if (status === Image.Ready)
                 root.current = this;
         }
 
-        states: State {
-            name: "visible"
-            when: root.current === img
-
-            PropertyChanges {
-                img.opacity: 1
-                img.scale: 1
+        Behavior on opacity {
+            Anim {
+                properties: "opacity"
             }
         }
 
-        transitions: Transition {
+        Behavior on scale {
             Anim {
-                target: img
-                properties: "opacity,scale"
+                properties: "scale"
             }
         }
     }
