@@ -66,8 +66,8 @@ Item {
             anchors.leftMargin: Tokens.spacing.small
             anchors.rightMargin: root.padding
 
-            topPadding: Tokens.padding.larger
-            bottomPadding: Tokens.padding.larger
+            topPadding: Tokens.padding.large
+            bottomPadding: Tokens.padding.large
 
             placeholderText: qsTr("Search windows…")
 
@@ -141,7 +141,7 @@ Item {
             )
 
             highlight: StyledRect {
-                radius: Tokens.rounding.normal
+                radius: Tokens.rounding.small
                 color: Colours.palette.m3onSurface
                 opacity: 0.08
 
