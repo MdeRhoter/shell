@@ -243,6 +243,33 @@ StyledRect {
             }
         }
 
+        // Mouse battery (Logitech via Solaar)
+        WrappedLoader {
+            name: "mouseBattery"
+            active: Peripherals.mouse !== null
+
+            sourceComponent: ColumnLayout {
+                spacing: 0
+
+                MaterialIcon {
+                    Layout.alignment: Qt.AlignHCenter
+                    animate: true
+                    text: "mouse"
+                    fill: 1
+                    color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                }
+
+                StyledText {
+                    Layout.alignment: Qt.AlignHCenter
+                    animate: true
+                    text: Peripherals.mouse ? `${Peripherals.mouse.percentage}` : ""
+                    font.pointSize: Tokens.font.size.smaller
+                    font.family: Tokens.font.family.mono
+                    color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                }
+            }
+        }
+
         // Battery icon
         WrappedLoader {
             name: "battery"
