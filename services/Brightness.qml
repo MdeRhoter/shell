@@ -59,9 +59,35 @@ Singleton {
             monitor.setBrightness(monitor.brightness - GlobalConfig.services.brightnessIncrement);
     }
 
-    onMonitorsChanged: {
-        ddcMonitors = [];
-        ddcProc.running = true;
+    // --- martijn-ser9: amdgpu DDC-over-DPMS Oops guard (memory: ser9-dpms-ddcutil-oops) ---
+    // Probing the DP AUX bus (i2c-12) with ddcutil while a pipe is mid-DPMS-transition
+    // NULL-derefs amdgpu's dal_ddc_open -> kernel Oops -> wedged display -> the machine
+    // can't be woken from monitor standby (had to power-cycle). hypridle's `dpms off/on`
+    // removes+re-adds the wl_output on every standby-wake, which used to re-fire
+    // `ddcutil detect` here. So: only (re)detect when a genuinely NEW connector appears
+    // (never on a removal, nor on a DPMS re-add of a monitor we already know), and
+    // debounce to ride out the output churn. The per-monitor initial `getvcp` is gated
+    // the same way (see initedConnectors in the Monitor component below).
+    // NOTE: physically swapping a monitor on an existing connector won't re-detect its
+    // DDC bus until `systemctl --user restart caelestia.service`.
+    property string lastDetectSig: ""
+    property var initedConnectors: []
+
+    onMonitorsChanged: ddcDetectDebounce.restart()
+
+    Timer {
+        id: ddcDetectDebounce
+
+        interval: 1500  // coalesce the burst of add/remove events from a dpms or hotplug change
+        onTriggered: {
+            const names = Quickshell.screens.map(s => s.name).sort();
+            const known = root.lastDetectSig ? root.lastDetectSig.split(",") : [];
+            if (!names.some(n => !known.includes(n)))
+                return;  // no new connector (removal, or DPMS re-add of a known monitor) -> leave AUX untouched
+            root.lastDetectSig = names.join(",");
+            root.ddcMonitors = [];
+            ddcProc.running = true;  // a real new monitor: display is on, safe to probe DDC
+        }
     }
 
     Variants {
@@ -221,12 +247,20 @@ Singleton {
         }
 
         function initBrightness(): void {
-            if (isAppleDisplay)
+            if (isAppleDisplay) {
                 initProc.command = ["asdbctl", "get"];
-            else if (isDdc)
+            } else if (isDdc) {
+                // ser9 guard: read a DDC monitor's brightness over the AUX bus only the
+                // first time we ever see this connector (display is on then). On a DPMS
+                // resume this Monitor is recreated, but re-probing AUX here risks the
+                // dal_ddc_open Oops, so skip it. (memory: ser9-dpms-ddcutil-oops)
+                if (root.initedConnectors.includes(modelData.name))
+                    return;
+                root.initedConnectors.push(modelData.name);
                 initProc.command = ["ddcutil", "-b", busNum, "getvcp", "10", "--brief"];
-            else
+            } else {
                 initProc.command = ["sh", "-c", "echo a b c $(brightnessctl g) $(brightnessctl m)"];
+            }
 
             initProc.running = true;
         }

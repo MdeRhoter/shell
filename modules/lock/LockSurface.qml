@@ -15,6 +15,28 @@ WlSessionLockSurface {
     required property Pam pam
 
     readonly property alias unlocking: unlockAnim.running
+    // Computed once on creation so it doesn't flip to false when screen
+    // goes null during surface teardown, which would deactivate the Content
+    // Loader mid-incubation and cause "Object or context destroyed" warnings.
+    property bool isLandscape: false
+
+    // Set isLandscape once and start initAnim when the screen is available.
+    // We cannot use a live binding: it would flip to false when screen goes
+    // null during surface teardown, deactivating the Content Loader while
+    // sub-components are still incubating.
+    // We cannot use Component.onCompleted alone: Quickshell may assign screen
+    // after onCompleted fires, in which case screen.width throws a TypeError
+    // and initAnim never starts – leaving an invisible lock surface.
+    // Solution: try in both onCompleted and onScreenChanged; the guard
+    // !initAnim.running ensures we init at most once.
+    function _initForScreen(): void {
+        if (screen !== null && !initAnim.running) {
+            isLandscape = screen.width >= screen.height;
+            initAnim.start();
+        }
+    }
+    Component.onCompleted: _initForScreen()
+    onScreenChanged: _initForScreen()
 
     contentItem.Config.screen: screen.name
     contentItem.Tokens.screen: screen.name
@@ -44,12 +66,12 @@ WlSessionLockSurface {
                 to: lockContent.radius
             }
             Anim {
-                target: content
+                target: contentLoader
                 property: "scale"
                 to: 0
             }
             Anim {
-                target: content
+                target: contentLoader
                 property: "opacity"
                 to: 0
                 type: Anim.StandardSmall
@@ -88,8 +110,6 @@ WlSessionLockSurface {
     ParallelAnimation {
         id: initAnim
 
-        running: true
-
         Anim {
             target: background
             property: "opacity"
@@ -123,33 +143,40 @@ WlSessionLockSurface {
                     type: Anim.DefaultEffects
                     target: lockIcon
                     property: "opacity"
-                    to: 0
+                    to: root.isLandscape ? 0 : 1
                 }
                 Anim {
                     type: Anim.DefaultEffects
-                    target: content
+                    target: contentLoader
                     property: "opacity"
-                    to: 1
+                    to: root.isLandscape ? 1 : 0
                 }
                 Anim {
-                    target: content
+                    target: contentLoader
                     property: "scale"
-                    to: 1
+                    to: root.isLandscape ? 1 : 0
+                    type: Anim.DefaultSpatial
                 }
                 Anim {
                     target: lockBg
                     property: "radius"
-                    to: lockContent.Tokens.rounding.extraLarge * 1.5
+                    to: root.isLandscape ? lockContent.Tokens.rounding.extraLarge * 1.5 : lockContent.radius
                 }
                 Anim {
                     target: lockContent
                     property: "implicitWidth"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * lockContent.Tokens.sizes.lock.ratio
+                    to: root.isLandscape
+                        ? (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * lockContent.Tokens.sizes.lock.ratio
+                        : lockContent.size
+                    type: Anim.DefaultSpatial
                 }
                 Anim {
                     target: lockContent
                     property: "implicitHeight"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult
+                    to: root.isLandscape
+                        ? (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult
+                        : lockContent.size
+                    type: Anim.DefaultSpatial
                 }
             }
         }
@@ -231,14 +258,18 @@ WlSessionLockSurface {
             rotation: 180
         }
 
-        Content {
-            id: content
+        Loader {
+            id: contentLoader
 
             anchors.centerIn: parent
-            width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * Tokens.sizes.lock.ratio - Tokens.padding.extraLargeIncreased
-            height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult - Tokens.padding.extraLargeIncreased
+            active: root.isLandscape
 
-            lock: root
+            sourceComponent: Content {
+                width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * Tokens.sizes.lock.ratio - Tokens.padding.extraLargeIncreased
+                height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult - Tokens.padding.extraLargeIncreased
+                lock: root
+            }
+
             opacity: 0
             scale: 0
         }
