@@ -8,7 +8,7 @@ import qs.services
 ColumnLayout {
     id: root
 
-    spacing: Tokens.spacing.normal
+    spacing: Tokens.spacing.small
 
     readonly property string groupLabel: WorkspaceNameConfig.nameForWorkspace(Hypr.activeWsId)
 
@@ -30,7 +30,7 @@ ColumnLayout {
         visible: root.specialWindows.length === 0
         text: qsTr("Special workspace is empty")
         opacity: 0.6
-        font.pointSize: Tokens.font.size.smaller
+        font: Tokens.font.body.small
     }
 
     Repeater {
@@ -42,8 +42,7 @@ ColumnLayout {
             required property var modelData
 
             text: `\u2022 ${modelData.lastIpcObject.class || "Unknown"}: ${modelData.title || "No title"}`
-            font.family: Tokens.font.family.mono
-            font.pointSize: Tokens.font.size.smaller
+            font: Tokens.font.mono.small
         }
     }
 }

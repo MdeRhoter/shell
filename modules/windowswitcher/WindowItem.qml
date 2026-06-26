@@ -20,7 +20,7 @@ Item {
     anchors.right: parent?.right
 
     StateLayer {
-        radius: Tokens.rounding.normal
+        radius: Tokens.rounding.small
         onClicked: {
             Hypr.dispatch("focuswindow address:" + root.window.lastIpcObject.address);
             root.screenState.windowswitcher = false;
@@ -29,10 +29,10 @@ Item {
 
     Item {
         anchors.fill: parent
-        anchors.leftMargin: Tokens.padding.larger
-        anchors.rightMargin: Tokens.padding.larger
-        anchors.topMargin: Tokens.padding.smaller
-        anchors.bottomMargin: Tokens.padding.smaller
+        anchors.leftMargin: Tokens.padding.large
+        anchors.rightMargin: Tokens.padding.large
+        anchors.topMargin: Tokens.padding.extraSmall
+        anchors.bottomMargin: Tokens.padding.extraSmall
 
         // Workspace badge
         StyledRect {
@@ -42,7 +42,7 @@ Item {
             anchors.left: parent.left
 
             implicitWidth: wsLabel.implicitWidth + Tokens.padding.small * 2
-            implicitHeight: wsLabel.implicitHeight + Tokens.padding.smaller * 2
+            implicitHeight: wsLabel.implicitHeight + Tokens.padding.extraSmall * 2
             radius: Tokens.rounding.small
             color: Colours.palette.m3primaryContainer
 
@@ -51,8 +51,7 @@ Item {
 
                 anchors.centerIn: parent
                 text: root.window.workspace?.id?.toString() ?? "?"
-                font.pointSize: Tokens.font.size.small
-                font.weight: Font.Bold
+                font: Tokens.font.body.builders.small.weight(Font.Bold).build()
                 color: Colours.palette.m3onPrimaryContainer
             }
         }
@@ -67,13 +66,13 @@ Item {
 
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: wsBadge.right
-            anchors.leftMargin: Tokens.spacing.normal
+            anchors.leftMargin: Tokens.spacing.small
         }
 
         // Title + class name
         Item {
             anchors.left: appIcon.right
-            anchors.leftMargin: Tokens.spacing.normal
+            anchors.leftMargin: Tokens.spacing.small
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
 
@@ -83,7 +82,7 @@ Item {
                 id: title
 
                 text: root.window.lastIpcObject.title
-                font.pointSize: Tokens.font.size.normal
+                font: Tokens.font.body.medium
                 elide: Text.ElideRight
                 width: parent.width
             }
@@ -93,7 +92,7 @@ Item {
 
                 anchors.top: title.bottom
                 text: root.window.lastIpcObject.class
-                font.pointSize: Tokens.font.size.small
+                font: Tokens.font.body.small
                 color: Colours.palette.m3outline
                 elide: Text.ElideRight
                 width: parent.width

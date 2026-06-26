@@ -8,7 +8,7 @@ import qs.services
 ColumnLayout {
     id: root
 
-    spacing: Tokens.spacing.normal
+    spacing: Tokens.spacing.small
 
     StyledText {
         text: Updates.loading
@@ -36,8 +36,7 @@ ColumnLayout {
             required property var modelData
 
             text: `${modelData.name}  ${modelData.oldVer} \u2192 ${modelData.newVer}`
-            font.family: Tokens.font.family.mono
-            font.pointSize: Tokens.font.size.smaller
+            font: Tokens.font.mono.small
         }
     }
 }

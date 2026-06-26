@@ -13,7 +13,7 @@ StyledRect {
     readonly property color colour: hasUpdates ? Colours.palette.m3tertiary : Colours.palette.m3secondary
 
     implicitWidth: Tokens.sizes.bar.innerWidth
-    implicitHeight: layout.implicitHeight + Tokens.padding.normal * 2
+    implicitHeight: layout.implicitHeight + Tokens.padding.small * 2
 
     color: Qt.alpha(Colours.tPalette.m3surfaceContainer, Colours.tPalette.m3surfaceContainer.a)
     radius: Tokens.rounding.full
@@ -55,9 +55,7 @@ StyledRect {
 
             horizontalAlignment: StyledText.AlignHCenter
             text: Updates.count.toString()
-            font.pointSize: Tokens.font.size.smaller
-            font.family: Tokens.font.family.mono
-            font.weight: Font.Bold
+            font: Tokens.font.mono.builders.small.weight(Font.Bold).build()
             color: root.colour
         }
     }
