@@ -182,8 +182,7 @@ StyledRect {
                                 Layout.alignment: Qt.AlignHCenter
                                 animate: true
                                 text: Peripherals.mouse ? `${Peripherals.mouse.percentage}` : ""
-                                font.pointSize: Tokens.font.size.smaller
-                                font.family: Tokens.font.family.mono
+                                font: Tokens.font.mono.small
                                 color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
                             }
                         }
