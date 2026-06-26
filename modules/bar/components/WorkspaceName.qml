@@ -9,7 +9,7 @@ StyledRect {
     id: root
 
     readonly property color colour: Colours.palette.m3secondary
-    readonly property int padding: Tokens.padding.normal
+    readonly property int padding: Tokens.padding.small
     
     readonly property string workspaceGroup: WorkspaceNameConfig.labelForWorkspace(Hypr.activeWsId)
     
@@ -69,9 +69,7 @@ StyledRect {
 
             horizontalAlignment: StyledText.AlignHCenter
             text: root.workspaceGroup
-            font.pointSize: Tokens.font.size.normal
-            font.family: Tokens.font.family.sans
-            font.weight: Font.Bold
+            font: Tokens.font.body.builders.small.weight(Font.Bold).build()
             color: root.colour
         }
         
@@ -81,8 +79,7 @@ StyledRect {
             
             horizontalAlignment: StyledText.AlignHCenter
             text: `(${root.specialCount})`
-            font.pointSize: Tokens.font.size.smaller
-            font.family: Tokens.font.family.mono
+            font: Tokens.font.mono.small
             color: root.colour
             opacity: 0.8
         }

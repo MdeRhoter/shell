@@ -9,7 +9,7 @@ ColumnLayout {
 
     StyledText {
         text: qsTr("Keep Awake")
-        font.pointSize: Tokens.font.size.normal
+        font: Tokens.font.body.medium
     }
 
     StyledText {
@@ -17,7 +17,7 @@ ColumnLayout {
             ? qsTr("Active since %1").arg(Qt.formatTime(IdleInhibitor.enabledSince, GlobalConfig.services.useTwelveHourClock ? "hh:mm a" : "hh:mm"))
             : qsTr("Normal power management")
         color: Colours.palette.m3onSurfaceVariant
-        font.pointSize: Tokens.font.size.small
+        font: Tokens.font.body.small
     }
 
     SwitchRow {
