@@ -119,6 +119,21 @@ Item {
             sourceComponent: LockStatus {}
         }
 
+        Popout {
+            name: "idleInhibitor"
+            sourceComponent: KeepAwake {}
+        }
+
+        Popout {
+            name: "workspaceName"
+            sourceComponent: WorkspaceInfo {}
+        }
+
+        Popout {
+            name: "pendingUpdates"
+            sourceComponent: UpdatesInfo {}
+        }
+
         Repeater {
             model: ScriptModel {
                 values: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))

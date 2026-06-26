@@ -106,12 +106,16 @@ class BarConfig : public settings::ObjectNode {
             LIST_ENTRY(kbLayout, false),
             LIST_ENTRY(network, true),
             LIST_ENTRY(bluetooth, true),
+            LIST_ENTRY(idleInhibitor, true),
+            LIST_ENTRY(mouseBattery, true),
             LIST_ENTRY(battery, true),
         }))
     CONFIG_LIST(EntryList, entries,
         DEFAULT_ARG({
             LIST_ENTRY(logo, true),
             LIST_ENTRY(workspaces, true),
+            LIST_ENTRY(workspaceName, true),
+            LIST_ENTRY(pendingUpdates, true),
             LIST_ENTRY(spacer, true),
             LIST_ENTRY(activeWindow, true),
             LIST_ENTRY(spacer, true),
