@@ -55,6 +55,8 @@ Singleton {
 
     // Returns the full display name for a given workspace ID (used in the popout).
     function nameForWorkspace(wsId: int): string {
+        if (!groupingEnabled)
+            return wsId.toString();
         for (const g of groupNames) {
             if (wsId >= g.from && wsId <= g.to)
                 return g.name;
