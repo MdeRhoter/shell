@@ -72,6 +72,14 @@ ColumnLayout {
             popouts.currentName = id.toLowerCase();
             popouts.currentCenter = (ch.item as Item).mapToItem(root, 0, (ch.item as Item).implicitHeight / 2).y ?? 0;
             popouts.hasCurrent = true;
+        } else if (id === "workspaceName") {
+            popouts.currentName = "workspaceName";
+            popouts.currentCenter = (ch.item as Item).mapToItem(root, 0, (ch.item as Item).implicitHeight / 2).y ?? 0;
+            popouts.hasCurrent = true;
+        } else if (id === "pendingUpdates") {
+            popouts.currentName = "pendingUpdates";
+            popouts.currentCenter = (ch.item as Item).mapToItem(root, 0, (ch.item as Item).implicitHeight / 2).y ?? 0;
+            popouts.hasCurrent = true;
         }
     }
 
@@ -135,6 +143,18 @@ ColumnLayout {
                         screen: root.screen
                         fullscreen: root.fullscreen
                     }
+                }
+            }
+            DelegateChoice {
+                roleValue: "workspaceName"
+                delegate: WrappedLoader {
+                    sourceComponent: WorkspaceName {}
+                }
+            }
+            DelegateChoice {
+                roleValue: "pendingUpdates"
+                delegate: WrappedLoader {
+                    sourceComponent: PendingUpdates {}
                 }
             }
             DelegateChoice {

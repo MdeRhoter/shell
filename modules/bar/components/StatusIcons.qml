@@ -37,6 +37,15 @@ StyledRect {
     function collapsed(entry: var): bool {
         if (entry.id === "lockStatus")
             return !Hypr.capsLock && !Hypr.numLock;
+        // Fork entries. Before v2.3.0 these were WrappedLoaders whose `active:`
+        // binding decided whether they were constructed at all. v2.3.0 builds a
+        // delegate for every *enabled* config entry, so the condition has to move
+        // here — collapsing reserves no space and drops the surrounding spacing,
+        // which is the same visual result the old `active: false` gave.
+        if (entry.id === "idleInhibitor")
+            return !IdleInhibitor.enabled;
+        if (entry.id === "mouseBattery")
+            return Peripherals.mouse === null;
         return false;
     }
 
@@ -139,6 +148,44 @@ StyledRect {
                     delegate: EntryWrapper {
                         BatteryStatus {
                             colour: root.colour
+                        }
+                    }
+                }
+                // Keep Awake indicator (collapses when the inhibitor is off)
+                DelegateChoice {
+                    roleValue: "idleInhibitor"
+                    delegate: EntryWrapper {
+                        MaterialIcon {
+                            animate: true
+                            text: "coffee"
+                            color: Colours.palette.m3primary
+                            fill: 1
+                        }
+                    }
+                }
+                // Mouse battery, Logitech via Solaar (collapses when no mouse)
+                DelegateChoice {
+                    roleValue: "mouseBattery"
+                    delegate: EntryWrapper {
+                        ColumnLayout {
+                            spacing: 0
+
+                            MaterialIcon {
+                                Layout.alignment: Qt.AlignHCenter
+                                animate: true
+                                text: "mouse"
+                                fill: 1
+                                color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                            }
+
+                            StyledText {
+                                Layout.alignment: Qt.AlignHCenter
+                                animate: true
+                                text: Peripherals.mouse ? `${Peripherals.mouse.percentage}` : ""
+                                font.pointSize: Tokens.font.size.smaller
+                                font.family: Tokens.font.family.mono
+                                color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                            }
                         }
                     }
                 }
