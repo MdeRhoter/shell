@@ -166,21 +166,62 @@ These files were modified locally and are the most likely sources of merge confl
 | `modules/bar/popouts/Content.qml` | Added `Popout` registrations |
 | `plugin/src/Caelestia/Config/barconfig.hpp` | Added entries to C++ defaults |
 
+### Components upstream may delete out from under us
+
+Our custom files import shared components (e.g. `SwitchRow` from `qs.components.controls`).
+Upstream occasionally removes a component it considers unused — but **a deletion is not a
+merge conflict**, so it merges cleanly and only fails at load time with a fatal
+`Type X is not a type` / `Type X unavailable` chain.
+
+If that happens, restore the deleted file from history:
+```bash
+# Find the last commit that had it, then dump its contents back:
+git log --all --oneline -- components/controls/SwitchRow.qml
+git show <commit>^:components/controls/SwitchRow.qml > components/controls/SwitchRow.qml
+```
+Verify the restored file's token names still match the current API (`Tokens.padding.*`,
+`Tokens.rounding.*`, etc.) before committing.
+
+Known cases:
+| Component | Deleted by | Used by our |
+|---|---|---|
+| `components/controls/SwitchRow.qml` | upstream PR #1625 ("remove unused components") | `modules/bar/popouts/KeepAwake.qml` |
+
 ### After a conflict-free merge
 
-No rebuild is needed unless upstream changed C++ files. Restart Quickshell:
+A plugin rebuild is needed if **either**:
+- upstream (or you) changed `plugin/src/` C++ code, **or**
+- the version bumped (`version.txt` / `git describe` shows a new `vX.Y.Z`) — new QML often
+  references new C++ singletons. v2.1.0, for example, added `SessionManager`, which the
+  installed 2.0.3 plugin lacked, producing `SessionManager is not defined` at runtime.
+
+If neither applies, just restart Quickshell:
 ```bash
 systemctl --user restart caelestia.service
 ```
 
 ### When a plugin rebuild is needed
 
-Only required if upstream (or you) changed `plugin/src/` C++ code:
 ```bash
 cd ~/.config/quickshell/caelestia
+# Configure with PREFIX=/ so output lands in /usr/lib/qt6/qml (where Qt searches).
+# The cmake default prefix is /usr/local, which would install to /usr/local/usr/lib/...
+# and be silently ignored — the plugin would appear "not rebuilt".
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/
 cmake --build build
 sudo cmake --install build
+systemctl --user restart caelestia.service
 ```
+
+Confirm the new types registered, e.g.:
+```bash
+grep -c SessionManager /usr/lib/qt6/qml/Caelestia/Services/caelestia-services.qmltypes
+```
+
+> The system plugin files are owned by the `caelestia-shell` pacman package. The
+> `sudo cmake --install` overwrites them in place. A later `pacman -Syu` that upgrades
+> `caelestia-shell` will revert the plugin to the packaged version — if the shell breaks
+> after a system update, re-run the rebuild above.
 
 ---
 
