@@ -37,15 +37,37 @@ git merge upstream/main
 git add . && git commit
 ```
 
+> ⚠️ **After any version bump (vX.Y.Z changes), rebuild the plugin too** — not just
+> when `plugin/src/` shows merge conflicts. New QML routinely references new C++ types
+> (e.g. v2.1.0 added the `SessionManager` singleton). Skipping the rebuild gives runtime
+> errors like `SomeType is not defined`. Check the bump with `cat version.txt`.
+
+> ⚠️ **Upstream sometimes deletes components our custom files still use.** A fatal
+> `Type X is not a type` / `Type X unavailable` after a merge usually means upstream
+> removed `components/.../X.qml` that one of our custom files imports. Restore the file
+> from history: `git show <last-commit-that-had-it>^:path/to/X.qml`. (This happened with
+> `components/controls/SwitchRow.qml`, deleted upstream but used by our `KeepAwake.qml`.)
+
 ### Restart shell after QML changes
 ```bash
-pkill -f "qs.*caelestia" && qs -p ~/.config/quickshell/caelestia/shell.qml &
+systemctl --user restart caelestia.service
+# Then check it loaded clean:
+journalctl --user -u caelestia.service -n 30 --no-pager | grep -iE "ERROR|Configuration Loaded"
 ```
 
-### Rebuild plugin (only if C++ plugin/src/ changed)
+### Rebuild plugin (after any version bump, or if plugin/src/ changed)
 ```bash
-cmake --build build && sudo cmake --install build
+# IMPORTANT: configure with PREFIX=/ so files land in /usr/lib/qt6/qml (where Qt looks),
+# not the cmake default /usr/local/usr/lib/... where they are silently ignored.
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/
+cmake --build build
+sudo cmake --install build
+systemctl --user restart caelestia.service
 ```
+
+> Note: the system plugin is owned by the `caelestia-shell` pacman package. The install
+> above overwrites those files, so a future `pacman -Syu` that upgrades `caelestia-shell`
+> will revert the plugin — re-run the rebuild if the shell breaks after a system update.
 
 ### Push to fork
 ```bash
