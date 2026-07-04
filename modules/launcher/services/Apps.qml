@@ -11,13 +11,23 @@ Searcher {
     function launch(entry: DesktopEntry): void {
         appDb.incrementFrequency(entry.id);
 
+        // Launch through app2unit so the app runs in its own app.slice scope,
+        // a sibling of caelestia.service rather than a child of its cgroup.
+        // Without this, apps inherit the shell's service cgroup, so when qs
+        // crashes and systemd restarts caelestia.service (e.g. the fatal
+        // Wayland error on hibernate-resume), KillMode=control-group tears down
+        // the whole cgroup and takes every launched app (Brave, Signal, ...)
+        // down with it.
         if (entry.runInTerminal)
             Quickshell.execDetached({
-                command: [...GlobalConfig.general.apps.terminal, `${Quickshell.shellDir}/assets/wrap_term_launch.sh`, ...entry.command],
+                command: ["app2unit", "--", ...GlobalConfig.general.apps.terminal, `${Quickshell.shellDir}/assets/wrap_term_launch.sh`, ...entry.command],
                 workingDirectory: entry.workingDirectory
             });
         else
-            entry.execute();
+            Quickshell.execDetached({
+                command: ["app2unit", "--", ...entry.command],
+                workingDirectory: entry.workingDirectory
+            });
     }
 
     function search(search: string): var {
