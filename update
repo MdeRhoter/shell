@@ -42,6 +42,18 @@ build_install() {
     cmake --build build
     step "installing (sudo)"
     sudo cmake --install build >/dev/null
+    # INSTALL_QSCONFDIR points at this repo, so `cmake --install` re-emits
+    # shell.qml back onto the source as a root-owned, watchFiles:false copy
+    # (CMakeLists flips watchFiles off for the "installed" shell — commit
+    # e32e1fd8). That clobbers the dev source and leaves a root-owned file that
+    # later non-sudo git/./update ops can't rewrite. Restore the tracked
+    # (user-owned, watchFiles:true) version — the repo dir is user-owned so git
+    # replaces the root file without sudo. Guarded on root-ownership so a
+    # genuine local shell.qml edit is never discarded.
+    if [ "$(stat -c %U shell.qml 2>/dev/null)" = root ]; then
+        step "restoring dev shell.qml (install left it root-owned)"
+        git checkout -- shell.qml
+    fi
 }
 
 restart_shell() {
