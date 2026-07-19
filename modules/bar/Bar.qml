@@ -147,14 +147,18 @@ ColumnLayout {
             }
             DelegateChoice {
                 roleValue: "workspaceName"
-                delegate: WrappedLoader {
-                    sourceComponent: WorkspaceName {}
+                delegate: EntryWrapper {
+                    WorkspaceName {
+                        objectName: "taskbarWorkspaceName"
+                    }
                 }
             }
             DelegateChoice {
                 roleValue: "pendingUpdates"
-                delegate: WrappedLoader {
-                    sourceComponent: PendingUpdates {}
+                delegate: EntryWrapper {
+                    PendingUpdates {
+                        objectName: "taskbarPendingUpdates"
+                    }
                 }
             }
             DelegateChoice {
