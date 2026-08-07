@@ -108,7 +108,9 @@ Also called by hypridle's `on-resume` for the 900 s display-off listener. Both p
 **Lock keybind** (`Super+Ctrl+L`) uses only `global caelestia:lock` — a duplicate `exec loginctl lock-session` bind on the same key sends two Lock signals per keypress, causing double invocations.
 **`misc:allow_session_lock_restore = true`** — safety net for the brief window between Caelestia crashing and restarting: Hyprland shows a "locker died" info screen rather than an unlocked desktop. Caelestia re-creates lock surfaces when it restarts and `resume-lock.sh` re-locks via IPC.
 
-> ⚠️ **NOT CURRENTLY APPLIED** (checked 2026-08-07). `hyprctl getoption misc:allow_session_lock_restore` reports `bool: false / set: false`. It was never present in `hyprland.conf` either, so this was documented intent that was never configured — not something the Lua migration dropped. To actually enable it, add `allow_session_lock_restore = true` to the `misc = { … }` block in `~/.config/hypr/hyprland.lua` (currently only `disable_hyprland_logo`). Until then the crash window is unprotected.
+Set in the `misc = { … }` block of `~/.config/hypr/hyprland.lua`. Confirm with `hyprctl getoption misc:allow_session_lock_restore` → `bool: true / set: true`.
+
+> **History:** until 2026-08-07 this was documented here but never actually configured — the option was absent from the old `hyprland.conf` too, so it was never applied rather than dropped by the Lua migration. It reported `set: false` for as long as that note existed, leaving the crash window unprotected. Re-check the live value after Hyprland upgrades rather than trusting this paragraph.
 **IPC syntax:**
 ```bash
 # Lock
