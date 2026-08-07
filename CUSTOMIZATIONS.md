@@ -111,6 +111,32 @@ Also called by hypridle's `on-resume` for the 900 s display-off listener. Both p
 Set in the `misc = { … }` block of `~/.config/hypr/hyprland.lua`. Confirm with `hyprctl getoption misc:allow_session_lock_restore` → `bool: true / set: true`.
 
 > **History:** until 2026-08-07 this was documented here but never actually configured — the option was absent from the old `hyprland.conf` too, so it was never applied rather than dropped by the Lua migration. It reported `set: false` for as long as that note existed, leaving the crash window unprotected. Re-check the live value after Hyprland upgrades rather than trusting this paragraph.
+
+**`session.commands.logout` must exit the compositor, not terminate the logind session.**
+Keep it as `["hyprctl", "dispatch", "hl.dsp.exit()"]` in `~/.config/caelestia/shell.json`.
+
+> ⚠️ **Do not "simplify" this to Caelestia's built-in `logout` token** (or `loginctl
+> terminate-session`, or `SessionManager.logout()`). Those call
+> `org.freedesktop.login1.Session.Terminate`, which SIGTERMs every process in
+> `session-N.scope` — and under SDDM the **session leader in that scope is `sddm-helper`
+> itself** (`loginctl show-session` → `Leader=975`, pid 975 = `sddm-helper`). Killing it
+> makes SDDM log
+>
+> ```
+> Auth: sddm-helper (--start /usr/bin/start-hyprland --user martijn) crashed (exit code 1)
+> Authentication error: SDDM::Auth::ERROR_INTERNAL "Process crashed"
+> ```
+>
+> classify the logout as a crash, and never run its show-the-greeter path. Its original Xorg
+> stays up on vt2 with `-noreset -background none`, so you get **a bare cursor on a black
+> screen and no login prompt**. Recovery: switch to a TTY (`Ctrl+Alt+F3`) and
+> `sudo systemctl restart sddm`. Confirmed the hard way on 2026-08-07.
+>
+> Exiting the compositor instead unwinds the way SDDM expects: Hyprland exits →
+> `start-hyprland` exits → `wayland-session` exits → `sddm-helper` exits 0 → greeter returns.
+>
+> Note the dispatcher syntax matters too: bare `hyprctl dispatch exit` is rejected since
+> Hyprland 0.56 and fails *silently* when run detached. See `~/.config/hypr/POST_UPGRADE.md`.
 **IPC syntax:**
 ```bash
 # Lock
