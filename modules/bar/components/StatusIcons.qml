@@ -151,39 +151,99 @@ StyledRect {
                         }
                     }
                 }
-                // Keep Awake indicator (collapses when the inhibitor is off)
+                // Keep Awake indicator. root.collapsed() only drops the SPACING
+                // around an entry — EntryWrapper still sizes to item.implicitHeight —
+                // so the item has to collapse itself, the same way LockStatus does.
                 DelegateChoice {
                     roleValue: "idleInhibitor"
                     delegate: EntryWrapper {
-                        MaterialIcon {
-                            animate: true
-                            text: "coffee"
-                            color: Colours.palette.m3primary
-                            fill: 1
+                        Item {
+                            id: inhibitor
+
+                            property real iconHeight: IdleInhibitor.enabled ? coffeeIcon.implicitHeight : 0
+
+                            implicitWidth: coffeeIcon.implicitWidth
+                            implicitHeight: Math.round(iconHeight)
+
+                            Behavior on iconHeight {
+                                Anim {
+                                    type: Anim.SlowEffects
+                                }
+                            }
+
+                            MaterialIcon {
+                                id: coffeeIcon
+
+                                anchors.centerIn: parent
+
+                                text: "coffee"
+                                color: Colours.palette.m3primary
+                                fill: 1
+
+                                scale: IdleInhibitor.enabled ? 1 : 0.5
+                                opacity: IdleInhibitor.enabled ? 1 : 0
+
+                                Behavior on opacity {
+                                    Anim {
+                                        type: Anim.DefaultEffects
+                                    }
+                                }
+
+                                Behavior on scale {
+                                    Anim {}
+                                }
+                            }
                         }
                     }
                 }
-                // Mouse battery, Logitech via Solaar (collapses when no mouse)
+                // Mouse battery, Logitech via Solaar. Same self-collapse as above:
+                // without it a "mouse" icon would sit in the bar with no mouse paired.
                 DelegateChoice {
                     roleValue: "mouseBattery"
                     delegate: EntryWrapper {
-                        ColumnLayout {
-                            spacing: 0
+                        Item {
+                            id: mouseBattery
 
-                            MaterialIcon {
-                                Layout.alignment: Qt.AlignHCenter
-                                animate: true
-                                text: "mouse"
-                                fill: 1
-                                color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                            property real contentHeight: Peripherals.mouse ? mouseColumn.implicitHeight : 0
+
+                            implicitWidth: mouseColumn.implicitWidth
+                            implicitHeight: Math.round(contentHeight)
+
+                            Behavior on contentHeight {
+                                Anim {
+                                    type: Anim.SlowEffects
+                                }
                             }
 
-                            StyledText {
-                                Layout.alignment: Qt.AlignHCenter
-                                animate: true
-                                text: Peripherals.mouse ? `${Peripherals.mouse.percentage}` : ""
-                                font: Tokens.font.mono.small
-                                color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                            ColumnLayout {
+                                id: mouseColumn
+
+                                anchors.centerIn: parent
+                                spacing: 0
+
+                                opacity: Peripherals.mouse ? 1 : 0
+
+                                Behavior on opacity {
+                                    Anim {
+                                        type: Anim.DefaultEffects
+                                    }
+                                }
+
+                                MaterialIcon {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    animate: true
+                                    text: "mouse"
+                                    fill: 1
+                                    color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                                }
+
+                                StyledText {
+                                    Layout.alignment: Qt.AlignHCenter
+                                    animate: true
+                                    text: Peripherals.mouse ? `${Peripherals.mouse.percentage}` : ""
+                                    font: Tokens.font.mono.small
+                                    color: Peripherals.isLow(Peripherals.mouse) ? Colours.palette.m3error : root.colour
+                                }
                             }
                         }
                     }
