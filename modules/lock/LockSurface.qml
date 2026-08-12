@@ -38,8 +38,8 @@ WlSessionLockSurface {
     Component.onCompleted: _initForScreen()
     onScreenChanged: _initForScreen()
 
-    contentItem.Config.screen: screen.name
-    contentItem.Tokens.screen: screen.name
+    contentItem.Config.screen: screen?.name ?? ""
+    contentItem.Tokens.screen: screen?.name ?? ""
 
     color: "transparent"
 
