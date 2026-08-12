@@ -24,9 +24,24 @@ Singleton {
     readonly property HyprlandMonitor focusedMonitor: Hyprland.focusedMonitor
     readonly property int activeWsId: focusedWorkspace?.id ?? 1
 
-    readonly property HyprKeyboard keyboard: extras.devices.keyboards.find(kb => kb.main) ?? null
-    readonly property bool capsLock: keyboard?.capsLock ?? false
-    readonly property bool numLock: keyboard?.numLock ?? false
+    // `kb.main` is Hyprland's SKeybind-adjacent m_active flag, i.e. "the device that
+    // sent the most recent key or modifier event" -- CSeatManager::setKeyboard() is
+    // called from onKeyboardKey/onKeyboardMod and clears the flag on the previous
+    // keyboard. It is NOT a designated primary keyboard. On a multi-keyboard desk it
+    // hops around: observed keychron-link -> elgato-stream-deck-mk.2 -> keychron-link,
+    // because the Stream Deck's HID keyboard interface emits events too.
+    // Picking capsLock/numLock/layout off that single hopping device meant the readouts
+    // reflected whichever device was touched last, and a hop alone could flip them and
+    // fire the lock/layout toasts below with NO key pressed.
+    // Lock state is effectively global, so OR it across every keyboard; for the layout
+    // readouts prefer a device that actually reports a keymap, so a hop to a device
+    // with none can't flash kbLayoutFull to "Unknown".
+    // Only .find() is used, as that is the one list operation already known to work
+    // on extras.devices.keyboards.
+    readonly property var allKeyboards: extras.devices.keyboards ?? []
+    readonly property HyprKeyboard keyboard: allKeyboards.find(kb => kb.main && kb.activeKeymap) ?? allKeyboards.find(kb => kb.activeKeymap) ?? allKeyboards.find(kb => kb.main) ?? null
+    readonly property bool capsLock: !!allKeyboards.find(kb => kb.capsLock)
+    readonly property bool numLock: !!allKeyboards.find(kb => kb.numLock)
     readonly property string defaultKbLayout: keyboard?.layout.split(",")[0] ?? "??"
     readonly property string kbLayoutFull: keyboard?.activeKeymap ?? "Unknown"
     readonly property string kbLayout: kbMap.get(kbLayoutFull) ?? "??"
