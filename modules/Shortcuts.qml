@@ -64,13 +64,20 @@ Scope {
         // qmllint enable unresolved-type
         name: "launcher"
         description: "Toggle launcher"
-        onPressed: root.launcherInterrupted = false
-        onReleased: {
-            if (!root.launcherInterrupted && !root.hasFullscreen) {
-                const screenState = ShellState.forActive();
-                screenState.launcher = !screenState.launcher;
-            }
-            root.launcherInterrupted = false;
+        // Toggle on press, not release. Upstream toggles in onReleased so a bare
+        // SUPER tap can be cancelled by launcherInterrupt, but our bind is
+        // SUPER + D from hyprland.lua, so its Hyprland handler is "__lua", not
+        // "global". dsp_global sets releasePending only *after* Hyprland has
+        // decided whether to record the bind in m_pressedSpecialBinds
+        // (KeybindManager.cpp:782-795), so IGNORECONDITIONS stays false on
+        // release and the modmask guard at :651 drops the event whenever SUPER
+        // comes up before D -- the launcher then needed a second press. Native
+        // (hyprlang) global binds are immune; lua ones are not.
+        onPressed: {
+            if (root.hasFullscreen)
+                return;
+            const screenState = ShellState.forActive();
+            screenState.launcher = !screenState.launcher;
         }
     }
 
