@@ -321,25 +321,47 @@ if [ "$needs_build" = false ]; then
 fi
 
 # --- 2.5 Rebuild quickshell if Qt moved under it ---------------------------
-# quickshell-git is an AUR package compiled against whatever qt6-base was
-# installed at build time. When pacman later updates qt6-base, the running
-# binary keeps working but ANY restart crashes with a Qt ABI mismatch
-# ("built against Qt X but the system has updated to Y"). We detect this by
-# comparing the local pacman db entry mtimes: if qt6-base's entry is newer
-# than quickshell-git's, Qt was updated after quickshell was last built.
+# quickshell-git is an AUR package compiled against whatever Qt was installed at
+# build time, and it resolves ~60 Qt_6_PRIVATE_API symbols spanning Qt6Core,
+# Qt6Gui, Qt6Qml, Qt6Quick and Qt6WaylandClient. When pacman later updates Qt,
+# the running binary keeps working but ANY restart dies at the dynamic linker
+# ("undefined symbol: ..., version Qt_6_PRIVATE_API", exit 127) before a line of
+# QML is parsed - and an uncapped systemd Restart= then spins on it.
+#
+# Ask the linker, don't guess from package mtimes. `ldd -r` resolves every
+# relocation against the Qt installed right now, which is exactly the thing that
+# fails at startup. The mtime heuristic this replaces was both too eager and too
+# lax: a bare `pacman -S qt6-base` REINSTALL bumps the db entry and provokes a
+# needless ~10min rebuild, while a Qt package rebuilt in the same transaction as
+# quickshell can land in either order.
+#
+# This only fires when you RUN ./update. The pacman hook at
+# /etc/pacman.d/hooks/90-quickshell-qt-drift.hook is what warns at upgrade time,
+# while the shell is still running and the fix is still cheap; it uses the same
+# ldd -r test. Note quickshell-git ships its own quickshell-check.hook, but that
+# one runs the binary under test, so when the answer is "broken" it can only
+# crash with a bare symbol-lookup error rather than tell you what to do.
+QT_DRIFT_STAMP=/var/lib/quickshell-qt-drift
 qs_rebuilt=false
-qt_desc="$(echo /var/lib/pacman/local/qt6-base-*/desc)"
-qs_desc="$(echo /var/lib/pacman/local/quickshell-git-*/desc)"
-if [ -f "$qt_desc" ] && [ -f "$qs_desc" ] && [ "$qt_desc" -nt "$qs_desc" ]; then
+qs_bin="$(command -v quickshell || true)"
+qs_missing=""
+if [ -n "$qs_bin" ]; then
+    qs_missing="$(ldd -r "$qs_bin" 2>&1 | grep 'undefined symbol' | head -3)"
+fi
+if [ -n "$qs_missing" ]; then
     if command -v yay >/dev/null 2>&1; then
-        step "Qt updated since quickshell was built → rebuilding quickshell-git (sudo + compile)"
+        step "quickshell no longer links against the installed Qt → rebuilding quickshell-git (sudo + compile)"
+        printf '%s\n' "$qs_missing" | sed 's/^/    /'
         if yay -S quickshell-git; then
             qs_rebuilt=true
+            # Best-effort: ldd -r above is authoritative, so a stamp we fail to
+            # remove only costs a redundant warning.
+            sudo rm -f "$QT_DRIFT_STAMP" 2>/dev/null || true
         else
             die "quickshell rebuild failed — fix it, then re-run ./update (or 'yay -S quickshell-git')."
         fi
     else
-        printf '\033[1;33m!\033[0m Qt updated but yay not found — rebuild quickshell manually to avoid a restart crash.\n' >&2
+        printf '\033[1;33m!\033[0m quickshell is broken against the installed Qt but yay was not found — rebuild it manually or the next restart dies.\n' >&2
     fi
 fi
 
