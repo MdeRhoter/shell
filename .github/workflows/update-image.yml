@@ -12,6 +12,8 @@ concurrency:
   group: update-docker-ci-image
   cancel-in-progress: true
 
+# Overwritten at runtime by the "Lowercase the image owner" step below; kept
+# here so the image name is visible without reading the job.
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/shell-arch-env
 
@@ -27,6 +29,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # OCI repository names must be lowercase, and the owner here is
+      # "MdeRhoter" -- so interpolating github.repository_owner straight into
+      # the tag produced `ghcr.io/MdeRhoter/shell-arch-env:latest`, which buildx
+      # rejects outright: "invalid tag ...: repository name must be lowercase".
+      # That is why this image had never been published despite the workflow
+      # existing. Actions has no lowercase expression function, hence the step.
+      - name: Lowercase the image owner
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/shell-arch-env" >> "$GITHUB_ENV"
 
       - name: Write Dockerfile
         run: |
