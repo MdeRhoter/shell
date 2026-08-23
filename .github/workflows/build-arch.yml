@@ -27,7 +27,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/${{ github.repository_owner }}/shell-arch-env:latest
+      # LOWERCASE literal, deliberately. OCI repository names must be lowercase,
+      # so `ghcr.io/MdeRhoter/...` is invalid outright -- see the fix in
+      # update-image.yml, which is why this tag had never been published. That
+      # fix uses a step output, but jobs.<id>.container.image is evaluated
+      # BEFORE any step runs, so the same trick cannot work here and Actions
+      # expressions have no lowercase function. Hardcoding the owner is the
+      # remaining option short of a setup job just to downcase a constant.
+      image: ghcr.io/mderhoter/shell-arch-env:latest
 
     steps:
       - uses: actions/checkout@v6
