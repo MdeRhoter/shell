@@ -470,7 +470,13 @@ qs_rebuilt=false
 qs_bin="$(command -v quickshell || true)"
 qs_missing=""
 if [ -n "$qs_bin" ]; then
-    qs_missing="$(ldd -r "$qs_bin" 2>&1 | grep 'undefined symbol' | head -3)"
+    # `|| true` is load-bearing: grep exits 1 when it finds nothing, which is the
+    # HEALTHY case here, and under `set -o pipefail` that status is the
+    # pipeline's, so the assignment fails and `set -e` aborts ./update on the
+    # spot -- after 2.4 has already run, with no message, exiting 1. That makes
+    # a working quickshell look like a silent no-op update: the pacman hooks get
+    # installed and the plugin never rebuilds (hit 2026-08-23).
+    qs_missing="$(ldd -r "$qs_bin" 2>&1 | grep 'undefined symbol' | head -3 || true)"
 fi
 if [ -n "$qs_missing" ]; then
     if command -v yay >/dev/null 2>&1; then
@@ -507,7 +513,8 @@ fi
 if [ "$needs_build" = false ]; then
     plugin_missing=""
     while IFS= read -r so; do
-        found="$(ldd -r "$so" 2>&1 | grep -E 'not found|undefined symbol' | head -2)"
+        # Same pipefail trap as 2.5 -- a cleanly-linking .so makes grep exit 1.
+        found="$(ldd -r "$so" 2>&1 | grep -E 'not found|undefined symbol' | head -2 || true)"
         [ -n "$found" ] || continue
         plugin_missing="$so"$'\n'"$found"
         break
