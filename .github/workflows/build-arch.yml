@@ -1,0 +1,98 @@
+# Compile the native plugin on Arch, the way the laptop actually builds it.
+#
+# This is a VALIDATION job, not a build-artifact job. It deliberately produces
+# nothing installable: the plugin has to be linked against the libraries present
+# on the target machine at install time, and a runner's Arch snapshot drifts
+# from the laptop's within days. Shipping a runner-built .so would recreate the
+# exact failure this repo keeps hitting (2026-08-23: libcava 0.10.7 -> 1.0.0),
+# only with a slower feedback loop. Build locally; use this to catch "the fork
+# no longer compiles" on push, especially after a --port rebase.
+#
+# The container image is the one the sibling workflows already use. It is built
+# by "Update Docker CI image" (update-image.yml) and published to the FORK's
+# ghcr namespace, so if this job cannot pull the image, run that workflow once
+# via workflow_dispatch.
+
+name: Build on Arch
+
+on:
+  push:
+    branches:
+      - main
+      - custom-workspace-name
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/shell-arch-env:latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # Same two accelerators ./update uses locally. Here they mostly buy a
+      # warm-cache rerun; locally they are the point.
+      - name: Install accelerators
+        # -Syu, not -Sy: installing onto a partially-synced db is the classic
+        # Arch partial-upgrade trap, and the image is a week old by design.
+        run: pacman -Syu --needed --noconfirm ccache mold
+
+      # Keyed on the native sources: a QML-only commit restores the cache whole
+      # and the compile collapses to cache hits. restore-keys lets an unrelated
+      # C++ change start from the previous cache instead of cold.
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-arch-${{ hashFiles('plugin/**', 'extras/**', 'CMakeLists.txt') }}
+          restore-keys: |
+            ccache-arch-
+
+      # Mirrors system/ccache/ccache.conf. Without the sloppiness line the PCH
+      # defeats ccache entirely and the cache above would be dead weight; see
+      # that file for why.
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.config/ccache
+          printf 'sloppiness = pch_defines,time_macros\nmax_size = 2G\ncompression = true\n' \
+            > ~/.config/ccache/ccache.conf
+          ccache --zero-stats
+
+      # ENABLE_MODULES and the accelerator flags match build_install() in
+      # ./update. INSTALL_QSCONFDIR is required by the configure step even
+      # though nothing is installed here.
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ \
+            -DINSTALL_QSCONFDIR="$PWD" \
+            -DENABLE_MODULES="extras;plugin;shell;m3shapes" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_LINKER_TYPE=MOLD
+
+      - name: Build
+        run: cmake --build build
+
+      - name: ccache stats
+        run: ccache --show-stats
+
+      # The same ldd -r test the pacman hook runs, applied to what was just
+      # built. Catches a DT_NEEDED that resolves on the developer's box but not
+      # in a clean environment - i.e. an undeclared dependency - which is one of
+      # the few ABI problems a runner CAN legitimately answer.
+      - name: Check for unresolved symbols
+        run: |
+          status=0
+          while IFS= read -r so; do
+            out="$(ldd -r "$so" 2>&1 | grep -E 'not found|undefined symbol')" || continue
+            if [ -n "$out" ]; then
+              echo "::error file=$so::unresolved symbols in $so"
+              printf '%s\n' "$out" | sed 's/^/    /'
+              status=1
+            fi
+          done < <(find build -type f -name '*.so' | sort)
+          exit $status
