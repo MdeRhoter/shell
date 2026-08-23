@@ -1,0 +1,57 @@
+# nginx as a WebDAV-ish object store. ccache's http backend needs exactly three
+# verbs — GET, PUT, DELETE — on a flat-ish path space, which nginx's dav module
+# provides with no application code.
+#
+# Four settings here are load-bearing; getting any of them wrong yields a cache
+# that appears healthy and silently stores nothing:
+#
+#   create_full_put_path  ccache's default `subdirs` layout PUTs to /ab/cdef...
+#                         Without this nginx 409s every PUT whose parent
+#                         directory does not already exist, which is all of them.
+#   client_body_temp_path Must live on the SAME filesystem as `root`. nginx
+#                         buffers an upload to the temp path and then rename(2)s
+#                         it into place; across filesystems that is EXDEV and
+#                         the PUT fails with a 500. The default temp path is
+#                         /var/cache/nginx, which is the container's overlay,
+#                         NOT the PVC — so it must be moved under /data.
+#   client_max_body_size  Cached objects include PCH-adjacent output; the
+#                         default 1m truncates them into 413s.
+#   dav_access            The worker runs as uid 101 (nginx); see fsGroup in
+#                         30-deployment.yaml.
+#
+# /healthz is separate because `autoindex off` makes GET / return 403, which
+# would fail a naive probe.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ccache-nginx
+  namespace: ccache
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+
+        access_log off;
+        client_max_body_size 1024m;
+        client_body_temp_path /data/.tmp;
+
+        location = /healthz {
+            auth_basic off;
+            return 200 "ok\n";
+            add_header Content-Type text/plain;
+        }
+
+        location / {
+            root /data;
+
+            auth_basic "ccache";
+            auth_basic_user_file /etc/nginx/auth/htpasswd;
+
+            dav_methods PUT DELETE;
+            create_full_put_path on;
+            dav_access user:rw group:rw all:r;
+
+            autoindex off;
+        }
+    }

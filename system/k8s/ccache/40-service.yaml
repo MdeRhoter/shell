@@ -1,0 +1,38 @@
+# In-cluster address for the nightly pre-warm job.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ccache
+  namespace: ccache
+spec:
+  type: ClusterIP
+  selector:
+    app: ccache
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Address for the laptops. Talos ships no cloud load-balancer controller, so
+# type: LoadBalancer only resolves if you run MetalLB or Cilium L2 announcements
+# — otherwise this stays <pending> forever and you want the NodePort below
+# instead. Pin loadBalancerIP to something stable: it goes in ccache.conf on
+# every machine, so a changing address means silently losing the shared cache
+# (fail-safe — you just start missing — which is exactly why it would go
+# unnoticed).
+apiVersion: v1
+kind: Service
+metadata:
+  name: ccache-lan
+  namespace: ccache
+  annotations:
+    metallb.universe.tf/allow-shared-ip: ccache
+spec:
+  type: LoadBalancer
+  # loadBalancerIP: 10.0.0.50
+  selector:
+    app: ccache
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,123 @@
+# Nightly pre-warm: build the fork in-cluster so the laptop does not have to.
+#
+# THE POINT. A local ccache already takes a rebuild from 335s to 14s, so this
+# job is NOT here to speed up the common case — it cannot. It exists for the one
+# case a local cache cannot help: a `pacman -Syu` that bumps gcc or qt6 changes
+# the compiler hash and the header contents, invalidates every entry, and drops
+# the laptop back to a full 335s cold build. This job hits that new toolchain
+# first, overnight, and publishes the results — so the laptop's next build after
+# an upgrade pulls hits over the LAN instead of recompiling 125 TUs on 4 cores.
+#
+# WHY THIS IS SAFE, unlike shipping built artifacts around. Nothing this job
+# produces is ever installed. ccache's hash covers the compiler binary (see
+# CCACHE_COMPILERCHECK below) and every preprocessed header, so a container that
+# has drifted out of step with the laptop simply produces a MISS. The failure
+# mode is "you compile locally, exactly as today", never "you install an object
+# built against the wrong libcava". That fail-safe property is the whole reason
+# this design was chosen over a remote build target.
+#
+# `pacman -Syu` at the top is what keeps the drift small: the image is rebuilt
+# weekly by update-image.yml, but the laptop tracks Arch continuously, so the
+# job re-syncs to the current snapshot before building.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ccache-prewarm
+  namespace: ccache
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: Never
+          # The image carries qt6, libcava and quickshell-git already; it is the
+          # same one the CI workflows use. If the fork's ghcr package is private,
+          # create a pull secret and reference it here.
+          # imagePullSecrets:
+          #   - name: ghcr
+          containers:
+            - name: build
+              image: ghcr.io/MdeRhoter/shell-arch-env:latest
+              env:
+                - name: REPO_URL
+                  value: https://github.com/MdeRhoter/shell.git
+                - name: BRANCH
+                  value: custom-workspace-name
+                - name: CCACHE_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: ccache-auth
+                      key: username
+                - name: CCACHE_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: ccache-auth
+                      key: password
+              command:
+                - /bin/bash
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  pacman -Syu --needed --noconfirm ccache mold git
+
+                  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /workspace
+                  cd /workspace
+
+                  # These four MUST match the laptop's ccache.conf or every
+                  # lookup misses. See SHARED_CCACHE.md; compiler_check is the
+                  # one that bites, because its default (mtime) can never agree
+                  # across two machines.
+                  export CCACHE_DIR=/tmp/ccache
+                  export CCACHE_COMPILERCHECK=content
+                  export CCACHE_SLOPPINESS=pch_defines,time_macros
+                  export CCACHE_BASEDIR=/workspace
+                  export CCACHE_NOHASHDIR=1
+                  export CCACHE_REMOTE_STORAGE="http://${CCACHE_USER}:${CCACHE_PASS}@ccache.ccache.svc.cluster.local/"
+
+                  ccache --zero-stats
+
+                  # Mirrors build_install() in ./update. INSTALL_QSCONFDIR is
+                  # required by the configure step even though this job installs
+                  # nothing.
+                  cmake -B build -G Ninja \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DCMAKE_INSTALL_PREFIX=/ \
+                    -DINSTALL_QSCONFDIR=/workspace \
+                    -DENABLE_MODULES="extras;plugin;shell;m3shapes" \
+                    -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                    -DCMAKE_LINKER_TYPE=MOLD
+
+                  cmake --build build
+
+                  echo "--- ccache stats (expect high remote PUT counts) ---"
+                  ccache --show-stats --verbose
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: 8Gi
+                limits:
+                  cpu: "8"
+                  memory: 24Gi
+              volumeMounts:
+                - name: scratch
+                  mountPath: /workspace
+                - name: cache
+                  mountPath: /tmp/ccache
+          volumes:
+            # emptyDir on purpose: the job's LOCAL cache is throwaway, the
+            # shared one lives behind the Service. Sized for the 1.7Gi build
+            # tree plus 9x193Mi of PCH.
+            - name: scratch
+              emptyDir:
+                sizeLimit: 8Gi
+            - name: cache
+              emptyDir:
+                sizeLimit: 8Gi
