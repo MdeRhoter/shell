@@ -314,6 +314,49 @@ See `~/.config/hypr/hypridle.conf`. Key timers:
 - RX 6600 XT idle (three monitors active): ~22 W
 - Estimated total system: ~44–48 W
 Note: `amdgpu.runpm=0 amdgpu.gfxoff=0` kernel params halve dGPU idle power (~11 W) but are not needed for stability since the suspend-then-hibernate loop was the real cause of GPU resets.
+
+---
+
+## Sleep and power (Surface Laptop-specific)
+
+> The section above is **HX99G only**. This machine is a Microsoft Surface Laptop: Intel Kaby Lake (i915, device ID 5916), a single eDP panel, `intel_backlight` with `max_brightness = 7500`. Config comments that migrated from the HX99G do not describe this hardware — the dim rule here carried the comment "avoid 0 on OLED monitor" for a panel that is not OLED.
+
+### The black-screen-after-idle bug (fixed 2026-08-23)
+Symptom: the screen goes dark after idle or suspend and "refuses to come back"; the only apparent recovery is the power button, which produces a clean shutdown.
+The machine **never failed to wake**. Every incident shows the kernel reaching `PM: suspend exit`, wifi reassociating and the IPTS touchscreen re-enumerating, followed 12–35 s later by:
+```
+systemd-logind: Power key pressed short.
+systemd-logind: Powering off...
+```
+`HandlePowerKey=poweroff` was doing exactly its job — which is why the clean shutdown masked the real fault. Three stacked causes:
+1. **`brightnessctl -s set 10` was missing its `%`.** brightnessctl treats a bare number as a RAW value; raw 10 of max 7500 is **0.13%**, indistinguishable from a dead panel. (`hyprland.lua` gets this right with `set 40%`.)
+2. **`after_sleep_cmd` restored DPMS but not brightness**, and hypridle's `on-resume` handlers do not fire on every resume path. Confirmed miss on a hibernate rollback: `dpms("on")` ran, `brightnessctl -r` never did.
+3. **`brightnessctl -s` poisons its own save file.** `-s` overwrites the saved value with whatever is current, so one missed restore leaves the panel dim and the *next* `-s` saves that dim value. Every later `-r` then faithfully restores an invisible screen, surviving further suspends until logout. This is the state that "refuses to come back".
+
+**Fixes applied:**
+- `~/.config/hypr/hypridle.conf` — `set 10` → `set 10%`; the `rgb:kbd_backlight` listener removed (no such device here; it logged `Device 'rgb:kbd_backlight' not found.` every cycle)
+- `~/.config/hypr/scripts/restore-brightness.sh` — restores the saved value, then floors it at 10% of `max_brightness` so a poisoned save file can never yield an invisible screen. Wired into `after_sleep_cmd` **and** the dim listener's `on-resume`
+- `/etc/systemd/logind.conf.d/sleep-operation.conf` — `SleepOperation=suspend`, same as the HX99G. systemd 261 otherwise prefers suspend-then-hibernate, and hibernation is unreliable here (`PM: hibernation: Wakeup event detected during hibernation, rolling back`) — that rollback is one of the paths that skipped the restore
+- Unlike the HX99G, the hibernate targets are **deliberately left unmasked**, so `modules/BatteryMonitor.qml`'s critical-battery `SessionManager.hibernate()` still works
+
+**Recovery if it ever recurs:** tap brightness-up, not the power button. `XF86MonBrightnessUp` is bound with `locked = true`, so it reaches the compositor on the lock screen and writes an absolute value that re-latches the panel.
+
+### Two idle stacks were racing
+hypridle and Caelestia's own `modules/IdleMonitors.qml` were each running a complete idle stack. They fired ~150 ms apart on every cycle:
+```
+11:47:59.236  suspend requested from client PID 44340 ('systemctl')      <- hypridle
+11:47:59.409  suspend-then-hibernate requested from PID 1198 ('qs')      <- caelestia
+12:08:19.421  Call to Suspend failed: Action suspend-then-hibernate already in progress
+```
+hypridle is now the single owner: `"general": { "idle": { "timeouts": [] } }` in `~/.config/caelestia/shell.json` disables Caelestia's. `lockBeforeSleep` stays `true` — it is idempotent and harmless alongside hypridle's `before_sleep_cmd`. If you ever flip ownership, empty the listeners in `hypridle.conf` instead of re-adding both.
+
+### hypridle timers (this machine)
+Not the HX99G's 150/600/900/1800. See `~/.config/hypr/hypridle.conf`:
+- **150s** — dim to 10%
+- **300s** — lock screen (via `loginctl lock-session` → `lock_cmd` → Caelestia IPC)
+- **330s** — DPMS off
+- **600s** — `systemctl suspend` (plain S3, pinned by the logind drop-in)
+
 ---
 
 ## Pushing to origin
