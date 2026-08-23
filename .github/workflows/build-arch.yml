@@ -38,6 +38,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # CMakeLists.txt:11 derives VERSION from `git describe --tags
+          # --abbrev=0` and treats an empty result as FATAL_ERROR. The default
+          # checkout is a depth-1 clone carrying NO tags at all -- verified:
+          # `git clone --depth 1` of this branch yields 0 tags and describe says
+          # "No names found". Fetching tags alone would not be enough either,
+          # since describe has to walk back to the nearest one, so the history
+          # has to be present too. 0 = full clone.
+          fetch-depth: 0
+
+      # git refuses to operate as one user on a repository owned by another, and
+      # in a CONTAINER job the workspace is owned by the host runner user while
+      # the steps run as root. actions/checkout gets its own work done anyway, so
+      # this only breaks git calls in LATER steps -- and the one that matters is
+      # inside CMakeLists.txt, which reports its own empty result rather than
+      # git's reason. Hence the misleading "VERSION is not set and failed to get
+      # from git", with the real cause ("detected dubious ownership in repository
+      # at '/__w/shell/shell'") several lines above it.
+      #
+      # Note this is a SECOND, independent cause of that same message: fixing
+      # only the ownership half still leaves describe with no tags to find.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # Same two accelerators ./update uses locally. Here they mostly buy a
       # warm-cache rerun; locally they are the point.
