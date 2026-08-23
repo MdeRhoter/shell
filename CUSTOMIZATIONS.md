@@ -350,7 +350,7 @@ hypridle and Caelestia's own `modules/IdleMonitors.qml` were each running a comp
 ```
 hypridle is now the single owner: `"general": { "idle": { "timeouts": [] } }` in `~/.config/caelestia/shell.json` disables Caelestia's. `lockBeforeSleep` stays `true` — it is idempotent and harmless alongside hypridle's `before_sleep_cmd`. If you ever flip ownership, empty the listeners in `hypridle.conf` instead of re-adding both.
 
-### Second failure mode: eDP panel does not scan out (under test)
+### Second failure mode: eDP panel does not scan out (CAUSE UNKNOWN)
 Distinct from the backlight bug above, and it survived that fix. Symptom: a brief flash of the lock screen on resume, then black.
 
 Do not confuse the two. The discriminator is that on this one *everything above the display works*:
@@ -361,11 +361,21 @@ Do not confuse the two. The discriminator is that on this one *everything above 
 ```
 Hyprland answers, backlight is at 40%, input reaches the lock screen and PAM authenticates — the panel just never scans out. That isolates it to the eDP output.
 
-**Suspected cause: PSR (Panel Self Refresh).** Classic on Kaby Lake eDP, and the panel does advertise it (`Sink support: PSR = yes [0x01]`). `i915.enable_psr=0` added to `/etc/kernel/cmdline` on 2026-08-23; confirmed in the driver after reboot (`enable_psr = 0`, `PSR mode: disabled`). **Not yet confirmed as the fix** — the fault is intermittent (four incidents between 10:57 and 13:11 that day), so only several days of clean resumes will settle it. If it recurs, try `i915.enable_dc=0` then `i915.enable_fbc=0`, one at a time.
+**PSR is RULED OUT.** `i915.enable_psr=0` is in `/etc/kernel/cmdline` and confirmed active in the driver (`enable_psr = 0`, `PSR mode: disabled`, panel advertises `Sink support: PSR = yes [0x01]`). The fault still occurred on the 15:35:50 resume afterwards. The parameter has been left in place — it is harmless and removes one variable — but it is **not** the fix and the root cause is **unknown**.
 
-**Rescue: `CTRL + SUPER + SHIFT + D`** → `~/.config/hypr/scripts/rescue-display.sh`, which cycles DPMS to force a modeset and link retrain. Bound `locked = true` so it works from the lock screen, and it calls `hyprctl` **directly** rather than through a `caelestia:*` global — the brightness keys do go through Caelestia, which is why they were useless during an incident. The password also works blind: type it, Enter, then the chord.
+Untried next candidates, one at a time so the result is attributable: `i915.enable_dc=0` (display C-states), then `i915.enable_fbc=0`.
 
-> Whether the rescue chord recovers the panel is itself the next diagnostic. If it does, a modeset is sufficient and can be wired into the resume path automatically. If it does not, PSR was not the cause.
+### Mitigation currently in force (2026-08-23)
+Because recovery is blind and every incident followed a blank-and-resume, `hypridle.conf` is cut down to two rules — dim at 150s, lock at 300s. **DPMS-off at 330s and auto-suspend at 600s are commented out.** Lid close and manual suspend still work. This costs battery and prevents the failure state rather than fixing it; both blocks carry a comment explaining why. Restore them when the panel reliably comes back.
+
+### Rescue keybind — and the v1 bug, which was self-inflicted
+`CTRL + SUPER + SHIFT + D` → `~/.config/hypr/scripts/rescue-display.sh`. Bound `locked = true` so it works from the lock screen, and it calls `hyprctl` **directly** rather than through a `caelestia:*` global — the brightness keys do route through Caelestia, which is why they were useless during an incident. The password also works blind: type it, Enter, then the chord.
+
+> **v1 of this script made things dramatically worse and the symptom looked like a hardware fault.** It was a bare `dpms off; sleep 1; dpms on`, so every press blanked the panel for a full second before restoring it. Pressing the chord twice meant run A's `on` lit the panel and run B's `off` killed it about a second later — reported from the field as "it comes on for 1 second and then goes black again", indistinguishable from the real fault. Mashing it oscillated indefinitely, and any run interrupted mid-sleep left DPMS off with no way back except a shell.
+>
+> v2 fixes all three: it reads `dpmsStatus` first and only performs the disruptive off/on cycle when Hyprland believes the panel is already on (if DPMS is off it just turns it on, blanking nothing); `flock` allows one instance at a time and extra presses only ever force *on*; and a `trap` forces DPMS on plus brightness 40% on every exit path including SIGTERM. Test any change to it with `DRYRUN=1`, which exercises the logic and writes to `$XDG_RUNTIME_DIR/rescue-display.log` without touching the display.
+
+**Any blind-recovery tool must never be able to leave the panel dark.** That is the lesson worth keeping.
 
 ### systemd-boot entry selection
 `/efi/loader/loader.conf` had `default 0051d653...*` — the bare machine-id prefix, which globs **every** entry including stock `linux`, and `LoaderEntryDefault` in EFI vars pointed at `6.19.8-arch1-1-surface.conf`, a version that no longer existed. So nothing actually pinned the Surface kernel; it was winning on sort order or by being picked off the 5 s menu.
@@ -382,8 +392,10 @@ Note `/etc/kernel/cmdline` is shared by every generated entry, so `i915.enable_p
 Not the HX99G's 150/600/900/1800. See `~/.config/hypr/hypridle.conf`:
 - **150s** — dim to 10%
 - **300s** — lock screen (via `loginctl lock-session` → `lock_cmd` → Caelestia IPC)
-- **330s** — DPMS off
-- **600s** — `systemctl suspend` (plain S3, pinned by the logind drop-in)
+- ~~**330s** — DPMS off~~ — commented out, see the mitigation above
+- ~~**600s** — `systemctl suspend`~~ — commented out, see the mitigation above
+
+`hypridle` therefore logs `found 2 rules`. When the eDP fault is solved, uncomment both; the suspend one is plain S3, pinned by the logind drop-in.
 
 ---
 
