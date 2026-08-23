@@ -350,6 +350,34 @@ hypridle and Caelestia's own `modules/IdleMonitors.qml` were each running a comp
 ```
 hypridle is now the single owner: `"general": { "idle": { "timeouts": [] } }` in `~/.config/caelestia/shell.json` disables Caelestia's. `lockBeforeSleep` stays `true` — it is idempotent and harmless alongside hypridle's `before_sleep_cmd`. If you ever flip ownership, empty the listeners in `hypridle.conf` instead of re-adding both.
 
+### Second failure mode: eDP panel does not scan out (under test)
+Distinct from the backlight bug above, and it survived that fix. Symptom: a brief flash of the lock screen on resume, then black.
+
+Do not confuse the two. The discriminator is that on this one *everything above the display works*:
+```
+13:11:28.62  hypridle[9150]: ok        <- hyprctl dispatch dpms("on") succeeded
+13:11:28.62  hypridle[9153]: ok        <- restore-brightness.sh ran
+12:49:31.70  quickshell.pam: Authenticated successfully.   <- a blind-typed password WORKED
+```
+Hyprland answers, backlight is at 40%, input reaches the lock screen and PAM authenticates — the panel just never scans out. That isolates it to the eDP output.
+
+**Suspected cause: PSR (Panel Self Refresh).** Classic on Kaby Lake eDP, and the panel does advertise it (`Sink support: PSR = yes [0x01]`). `i915.enable_psr=0` added to `/etc/kernel/cmdline` on 2026-08-23; confirmed in the driver after reboot (`enable_psr = 0`, `PSR mode: disabled`). **Not yet confirmed as the fix** — the fault is intermittent (four incidents between 10:57 and 13:11 that day), so only several days of clean resumes will settle it. If it recurs, try `i915.enable_dc=0` then `i915.enable_fbc=0`, one at a time.
+
+**Rescue: `CTRL + SUPER + SHIFT + D`** → `~/.config/hypr/scripts/rescue-display.sh`, which cycles DPMS to force a modeset and link retrain. Bound `locked = true` so it works from the lock screen, and it calls `hyprctl` **directly** rather than through a `caelestia:*` global — the brightness keys do go through Caelestia, which is why they were useless during an incident. The password also works blind: type it, Enter, then the chord.
+
+> Whether the rescue chord recovers the panel is itself the next diagnostic. If it does, a modeset is sufficient and can be wired into the resume path automatically. If it does not, PSR was not the cause.
+
+### systemd-boot entry selection
+`/efi/loader/loader.conf` had `default 0051d653...*` — the bare machine-id prefix, which globs **every** entry including stock `linux`, and `LoaderEntryDefault` in EFI vars pointed at `6.19.8-arch1-1-surface.conf`, a version that no longer existed. So nothing actually pinned the Surface kernel; it was winning on sort order or by being picked off the 5 s menu.
+
+Both `linux-surface` and stock `linux` are installed, and stock sorts higher (7.1.9 > 6.19.8), so an unattended reboot could have landed on a kernel with no IPTS support. Now:
+```
+default 0051d653d4504235ab8131def8ccedf1-*-surface.conf
+```
+No version number, so it survives the next `linux-surface` bump instead of going stale the way the EFI var did. It matches the Surface entry only — not `-surface-fallback.conf`, not either 7.1.9 entry. The stale `LoaderEntryDefault` was cleared with `bootctl set-default ""` so `loader.conf` is the single source of truth. Backup at `/efi/loader/loader.conf.bak`.
+
+Note `/etc/kernel/cmdline` is shared by every generated entry, so `i915.enable_psr=0` applies to the stock kernel too. Harmless. `reinstall-kernels` regenerates entries for all installed kernels; it never installs or replaces one.
+
 ### hypridle timers (this machine)
 Not the HX99G's 150/600/900/1800. See `~/.config/hypr/hypridle.conf`:
 - **150s** — dim to 10%
