@@ -1,18 +1,98 @@
 [Unit]
 Description=Caelestia Shell (Quickshell)
 After=graphical-session.target
-# Give up after 5 failures in 60s instead of restarting forever. A Qt ABI drift
-# (quickshell built against an older Qt) kills qs at the dynamic linker in
-# milliseconds, so an uncapped Restart= just spins: this cost 51 restarts on
-# 2026-08-22. Capped, the unit lands in 'failed' where the cause is legible.
-StartLimitIntervalSec=60
-StartLimitBurst=5
+
+# --- Start-limit tuning: two failure modes, one cap -------------------------
+# This unit has to survive two DIFFERENT crash loops, and the tension between
+# them is why this was mistuned twice.
+#
+#   FAST FAIL   A Qt ABI drift (quickshell built against an older Qt) kills qs
+#               at the dynamic linker in milliseconds. Uncapped, this just
+#               spins; it cost 51 restarts on 2026-08-22.
+#   SLOW FAIL   Hyprland 0.56.0 crashes on the DCN31 wake path and takes the
+#               whole Wayland session down. qs cannot start until the compositor
+#               is back and each attempt burns ~7-8s. We want to RIDE THIS OUT,
+#               not give up: on 2026-07-21 (08:32:32->08:45) a too-tight limit
+#               hit start-limit-hit and left the shell dead for ~13 minutes.
+#
+# The trap is that a SHORT interval does not just cap less — it can stop capping
+# ENTIRELY. With burst=30/interval=300 the slow-fail cycle (~9s: 8s attempt +
+# RestartSec) fits ~33 starts per window, so the counter keeps resetting just
+# under the burst and the loop runs forever. That is the 51-restart spin.
+# Tightening to burst=5/interval=60 caps the fast loop but gives the slow loop
+# only ~45s of ride-out, re-creating the 2026-07-21 outage.
+#
+# So: keep the burst generous and make the interval LONGER than any loop needs
+# to reach it. At 900s the counter can never reset mid-loop, which makes burst
+# the effective cap in BOTH modes — 30 consecutive failures and it stops, full
+# stop. In wall-clock that is ~30-60s for the fast loop (trips, lands in
+# 'failed' where the cause is legible) and ~4.5-5.5 min for the slow one (rides
+# out a returning compositor). Both incidents covered by one setting.
+StartLimitIntervalSec=900
+StartLimitBurst=30
 
 [Service]
 Type=simple
+
+# Theming. Both are safe to ship to a machine that lacks the backing package:
+# Qt falls back to its normal auto-detection when the named platform theme
+# plugin is absent, and it does so SILENTLY (no warning in the journal).
+#
+# Verified on martijn-ser9 2026-08-23, and worth knowing before you debug Qt
+# theming here: QT_QPA_PLATFORMTHEME=qtengine is currently INERT on this box.
+# There is no libqtengine.so under any platformthemes dir; the only plugins
+# present are qgtk3, qxdgdesktopportal and qt6ct. The `qtengine` package is not
+# installed and is not in the configured repos (it is an AUR-only platform
+# theme). ~/.config/qtengine/{config.json,caelestia.colors} exists, but that is
+# written unconditionally by the caelestia CLI's own theming
+# (caelestia/utils/theme.py) from its qtengine.json template — its presence is
+# NOT evidence the plugin is installed.
+#
+# Left as-is deliberately rather than "fixed" to qt6ct: switching it would
+# change how every Qt app on the machine picks up style and colours, which is a
+# theming decision, not a unit-file cleanup. If you want it live, either install
+# the AUR qtengine package or change this to qt6ct (that plugin IS present, and
+# qt6ct + kvantum are both installed).
+Environment="QT_QPA_PLATFORMTHEME=qtengine"
+Environment="QT_ICON_THEME=Papirus-Dark"
+
+# Load THIS repo by explicit path, not `qs -c caelestia` by name.
+#
+# Both resolve to the same file today — verified 2026-08-23: the running
+# `qs -c caelestia` reports config path
+# /home/martijn/.config/quickshell/caelestia/shell.qml, because -c prefers
+# $XDG_CONFIG_HOME/quickshell/<name> over /etc/xdg/quickshell/<name>.
+#
+# The difference is the FAILURE mode. The caelestia-shell package also ships
+# /etc/xdg/quickshell/caelestia, so if this repo ever goes missing or gets
+# renamed, `-c caelestia` SILENTLY falls back to the distro config: the shell
+# comes up looking fine while none of your fork's changes are in it. An
+# explicit path fails loudly instead. That silent-fallback class of bug is
+# exactly what installed_rev() and the drift checks in ./update exist to catch,
+# so do not re-introduce it here.
+#
+# (The old "load the packaged 2.0 config by name" comment dated 2026-06-26 is
+# stale: it was true only while the fork was moved aside as
+# caelestia.1x-bak-20260626. The fork is back at the path above.)
 ExecStart=qs -p %h/.config/quickshell/caelestia/shell.qml
-Restart=on-failure
-RestartSec=2
+
+# Respawn a CLEAN exit too, not just a failure. idle-hibernate refuses to
+# hibernate while unlocked, and locking needs the shell up, so a shell that
+# exits 0 and stays gone silently blocks hibernation. `systemctl --user
+# stop/restart` still work — they are not "restarts" as far as Restart= is
+# concerned. The start limit above is what guards the crash loop.
+Restart=always
+
+# 1s, not the 5s default: on amdgpu DCN31 hibernate-resume qs dies and must be
+# respawned before relock-after-resume can re-arm Caelestia's lock, and this
+# respawn delay is the dominant "dark screen on wake" time.
+# (See ~/.local/bin/relock-after-resume.)
+RestartSec=1
+
+# NOTE for per-machine divergence: do NOT edit this file locally — ./update
+# overwrites it from the repo. Put host-specific additions in a drop-in under
+# ~/.config/systemd/user/caelestia.service.d/ instead; ./update never touches
+# that directory. 10-relock-guard.conf already uses this pattern.
 
 [Install]
 WantedBy=graphical-session.target
