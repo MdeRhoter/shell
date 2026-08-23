@@ -1,0 +1,18 @@
+[Unit]
+Description=Caelestia Shell (Quickshell)
+After=graphical-session.target
+# Give up after 5 failures in 60s instead of restarting forever. A Qt ABI drift
+# (quickshell built against an older Qt) kills qs at the dynamic linker in
+# milliseconds, so an uncapped Restart= just spins: this cost 51 restarts on
+# 2026-08-22. Capped, the unit lands in 'failed' where the cause is legible.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=qs -p %h/.config/quickshell/caelestia/shell.qml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
