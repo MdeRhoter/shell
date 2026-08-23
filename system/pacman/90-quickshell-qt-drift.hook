@@ -1,0 +1,42 @@
+# Warn at upgrade time when a library moves out from under quickshell or the
+# caelestia native plugin.
+#
+# Both are compiled against the libraries present at build time; a later upgrade
+# breaks them at the dynamic linker on the next start, which is normally the
+# next login - far from the upgrade that caused it. This fires while the shell
+# is still running and the fix is still cheap.
+#
+# This deliberately overlaps quickshell-git's own quickshell-check.hook, which
+# runs `quickshell --private-check-compat`. That check IS the binary under test:
+# when the answer is "incompatible" it cannot run to say so and instead dies
+# with a bare `symbol lookup error`, mid-upgrade, with no instruction (see
+# pacman.log 2026-08-22 09:32:03 - it fired 7 minutes before the crash loop and
+# read as noise). Checking from outside with ldd -r has no such blind spot, and
+# it also sees the plugin, which --private-check-compat never loads.
+#
+# WHY Type = Path AND NOT A PACKAGE LIST. This used to target qt6-base,
+# qt6-declarative and qt6-wayland by name, which covered quickshell's Qt
+# symbols and nothing else. The caelestia plugin links ~20 more libraries
+# (libcava, aubio, qalculate, pipewire, libsensors, cpptrace, polkit, pam ...),
+# and on 2026-08-23 the one that actually broke was libcava - a package nobody
+# had thought to list, whose soname bump went through unnoticed and killed the
+# next login. Keeping that list correct by hand is the failure mode, so match on
+# what actually matters instead: any shared object landing under /usr/lib.
+# fnmatch runs without FNM_PATHNAME here, so `*` spans `/` and the single glob
+# covers /usr/lib/qt6/qml/... as well.
+#
+# This trigger fires on most upgrade transactions. That is affordable: without
+# NeedsTargets the script runs ONCE per transaction, and it is ~20 ldd execs.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/*.so*
+
+[Action]
+Description = Checking quickshell and the caelestia plugin against the new libraries...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/quickshell-qt-drift
+Depends = bash
+Depends = glibc
