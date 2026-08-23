@@ -1,0 +1,75 @@
+# The cache server itself.
+#
+# replicas is 1 and must stay 1: the PVC is ReadWriteOnce and two nginx pods
+# would race on PUT. This is a cache — a single point of failure is acceptable
+# because every client degrades to compiling locally when it is unreachable.
+#
+# fsGroup 101 is the nginx user in the official image. Without it the worker
+# cannot write to the PVC and every PUT 500s while GETs keep working, which
+# presents as a cache that never fills.
+#
+# NOTE: verify the image has the dav module before trusting this:
+#   kubectl -n ccache exec deploy/ccache -- nginx -V 2>&1 | tr ' ' '\n' | grep dav
+# It must print --with-http_dav_module. If it does not, see SHARED_CCACHE.md
+# for the Redis fallback.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ccache
+  namespace: ccache
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ccache
+  template:
+    metadata:
+      labels:
+        app: ccache
+    spec:
+      securityContext:
+        fsGroup: 101
+      containers:
+        - name: nginx
+          image: nginx:1.29-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/nginx/conf.d
+            - name: auth
+              mountPath: /etc/nginx/auth
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ccache-data
+        - name: config
+          configMap:
+            name: ccache-nginx
+        - name: auth
+          secret:
+            secretName: ccache-auth
