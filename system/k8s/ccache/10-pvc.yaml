@@ -1,0 +1,23 @@
+# Backing store for the shared compilation cache.
+#
+# 20Gi is deliberate headroom: the laptop's local cache sits at ~0.2Gi for one
+# build of one branch, but this holds every variant the nightly job produces
+# across Arch snapshots (a new GCC or Qt invalidates everything and the old
+# entries linger until eviction). nginx does no eviction of its own — ccache
+# clients only ever GET/PUT — so size this generously and prune with the job in
+# SHARED_CCACHE.md if it ever fills.
+#
+# storageClassName is intentionally left unset so it uses the cluster default.
+# Set it explicitly if your Talos cluster has more than one provisioner.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ccache-data
+  namespace: ccache
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: local-path
