@@ -11,10 +11,14 @@
 #   ./update --status       read-only: what is running vs HEAD vs upstream
 #   ./update --force-build  rebuild + reinstall even if nothing looks changed
 #   ./update --port         rebase custom commits onto the latest upstream tag
+#   ./update --prune-cache  prune the image cache only (no build, no restart)
 #
 # Prefer this over the manual cmake in UPDATE_GUIDE.md: the flags there are easy
 # to under-specify (a missing -DENABLE_MODULES silently drops M3Shapes) and the
 # manual path skips the root-owned shell.qml restore below.
+#
+# Every path that restarts the shell also prunes the image cache first — see
+# prune_image_cache() for why that is a correctness concern, not tidiness.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,6 +50,101 @@ force_push_hint() {
 installed_rev() {
     [ -x /usr/lib/caelestia/version ] || return 1
     /usr/lib/caelestia/version --terse 2>/dev/null | sed -n 3p
+}
+
+# --- Image cache prune -----------------------------------------------------
+# The shell's image cache (CachingImage -> CachingImageProvider -> ImageCacher)
+# has NO eviction of its own: every distinct (source, size, fillMode) triple
+# becomes a PNG under ~/.cache/caelestia/imagecache and nothing ever deletes it.
+# It reached 2.0GB / 1779 files here, including 104 entries above 4096px -- up
+# to 12288x8052, a 56MB PNG costing ~1.5s and ~340MB of RAM merely to READ back.
+# Producing one measured 34.5s of pegged CPU. Those entries are what made the
+# launcher and every flyout stall for tens of seconds, so this prune is part of
+# the fix, not housekeeping. CachingImage.maxPixelSize now stops NEW ones being
+# minted; this removes any that a pre-clamp shell (or a future regression) left.
+#
+# POLICY NOTE: ~/.cache is btrfs mounted noatime here, so there is no usable
+# access time and a real LRU is impossible. Cache files are written once and
+# never rewritten, so mtime is CREATION time -- the age rule below means "drop
+# what was created long ago", NOT "drop what has not been used lately". A hot
+# entry that ages out is simply re-rendered on next use, which is cheap and
+# safe: everything in this directory is derived data with a source of truth
+# elsewhere.
+CACHE_MAX_DIM=${CACHE_MAX_DIM:-4096}        # keep in sync with CachingImage.maxPixelSize
+CACHE_MAX_AGE_DAYS=${CACHE_MAX_AGE_DAYS:-30}
+CACHE_MAX_MB=${CACHE_MAX_MB:-512}
+
+prune_image_cache() {
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/caelestia/imagecache"
+
+    # This function deletes files recursively, so bound it before it runs. The
+    # suffix check alone is not a real guard (the path is built by appending that
+    # literal, so it always matches) -- the load-bearing half is requiring the
+    # directory to resolve inside $HOME, which stops a rogue XDG_CACHE_HOME from
+    # aiming the delete at a system path. Both must hold.
+    case "$cache" in
+        */caelestia/imagecache) ;;
+        *) die "Refusing to prune unexpected path '$cache'." ;;
+    esac
+    [ -d "$cache" ] || return 0
+    local resolved
+    resolved="$(cd "$cache" && pwd -P)" || die "Cannot resolve '$cache'."
+    case "$resolved/" in
+        "$HOME"/*) ;;
+        *) die "Refusing to prune '$resolved' — outside \$HOME." ;;
+    esac
+
+    local before_kb before_n after_kb cur_kb cap_kb
+    before_kb=$(du -sk "$cache" | cut -f1)
+    before_n=$(find "$cache" -type f -name '*.png' | wc -l)
+
+    # 1. Oversized entries. The filename encodes the request as
+    #    <sha256>@<W>x<H>-<fillmode>.png, so the requested dimensions are readable
+    #    without decoding anything. Only top-level entries carry that form; the
+    #    notifs/ subdir uses plain hashes and is handled by rules 2 and 3.
+    local oversized=0 f
+    local victims
+    victims=$(find "$cache" -maxdepth 1 -type f -name '*@*x*-*.png' -printf '%f\n' 2>/dev/null | awk -v max="$CACHE_MAX_DIM" -v dir="$cache" '
+        { n = $0
+          sub(/^.*@/, "", n)
+          sub(/-[^-]*\.png$/, "", n)
+          split(n, d, "x")
+          if (d[1] + 0 > max || d[2] + 0 > max) print dir "/" $0 }')
+    if [ -n "$victims" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            # `rm && count` would abort the whole script under `set -e` if a file
+            # vanished between the find and the rm; count only what actually went.
+            if rm -f -- "$f"; then
+                oversized=$((oversized + 1))
+            fi
+        done <<< "$victims"
+    fi
+
+    # 2. Aged-out entries (creation-time semantics -- see the policy note above).
+    local aged
+    aged=$(find "$cache" -type f -name '*.png' -mtime +"$CACHE_MAX_AGE_DAYS" -print -delete 2>/dev/null | wc -l)
+
+    # 3. Hard size cap, oldest first. Runs last so it only handles whatever the
+    #    two cheaper rules left behind.
+    local capped=0 line sz path
+    cap_kb=$((CACHE_MAX_MB * 1024))
+    cur_kb=$(du -sk "$cache" | cut -f1)
+    if [ "$cur_kb" -gt "$cap_kb" ]; then
+        while IFS= read -r line; do
+            [ "$cur_kb" -gt "$cap_kb" ] || break
+            sz="${line%% *}"
+            path="${line#* }"
+            rm -f -- "$path" || continue
+            cur_kb=$(( cur_kb - (sz + 1023) / 1024 ))
+            capped=$((capped + 1))
+        done < <(find "$cache" -type f -name '*.png' -printf '%T@ %s %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
+    fi
+
+    after_kb=$(du -sk "$cache" | cut -f1)
+    step "pruned image cache: ${oversized} oversized (>${CACHE_MAX_DIM}px), ${aged} aged (>${CACHE_MAX_AGE_DAYS}d), ${capped} over ${CACHE_MAX_MB}MB cap"
+    printf '  %sMB / %s files -> %sMB / %s files\n' \
+        "$((before_kb / 1024))" "$before_n" "$((after_kb / 1024))" "$(find "$cache" -type f -name '*.png' | wc -l)"
 }
 
 # Optional build accelerators, used only when installed. Both are PURE SPEED —
@@ -138,12 +237,17 @@ build_install() {
 #      window sees no output at all — reporting a cheerful false "came up clean".
 #
 # The CLI path is kept for machines that run the shell without the unit.
+#
+# The CLI path is also outside the unit's cgroup, so a shell started that way
+# loses whatever Environment= the unit sets.
 restart_shell() {
     step "restarting shell"
     # Anchor for verify_shell: without it a "--since 1 min ago" window would also
     # scoop up errors logged BEFORE this restart (e.g. the crash you are fixing)
     # and report the new shell as broken when it came up fine.
     RESTART_TS="$(date '+%Y-%m-%d %H:%M:%S')"
+    # `systemctl cat` is the existence check: it fails when no such unit is known,
+    # unlike is-enabled/is-active which also fail for a present-but-stopped unit.
     if systemctl --user cat caelestia.service >/dev/null 2>&1; then
         systemctl --user restart caelestia.service \
             || die "systemctl --user restart caelestia.service failed — check 'systemctl --user status caelestia.service'."
@@ -335,6 +439,7 @@ port_upstream() {
     # Doing it in-line avoids the trap where a follow-up plain `./update` would
     # `git pull --rebase` against the still-old origin and UNDO the port.
     build_install
+    prune_image_cache
     restart_shell
     verify_shell
     printf '\033[1;32m✓\033[0m Ported onto %s, rebuilt, and restarted. Test the running shell; if good:\n' "$target"
@@ -349,6 +454,9 @@ port_upstream() {
 case "${1:-}" in
     --port)   port_upstream ;;             # never returns
     --status) status_report; exit 0 ;;     # read-only, no network
+    # Prune only. Useful after a shell that predates the sourceSize clamp has
+    # already filled the cache with oversized entries, without forcing a rebuild.
+    --prune-cache) prune_image_cache; exit 0 ;;
     # Rebuild + reinstall + restart exactly what is checked out, skipping the
     # sync entirely. Deliberately standalone: right after a --port the branch has
     # been rewritten, so local and origin have diverged and the sync guard below
@@ -365,6 +473,7 @@ case "${1:-}" in
         # as silent as the one being fixed).
         sync_system_files
         build_install
+        prune_image_cache
         restart_shell
         verify_shell
         printf '\033[1;32m✓\033[0m Rebuilt and restarted (%s)\n' "$(git log --oneline -1)"
@@ -537,6 +646,9 @@ fi
 
 # --- 4. Restart shell (only if anything changed) ---------------------------
 if [ "$old" != "$new" ] || [ "$needs_build" = true ] || [ "$qs_rebuilt" = true ]; then
+    # Prune before the restart so the fresh shell starts against a bounded cache
+    # and never re-reads a 56MB entry left by the previous one.
+    prune_image_cache
     restart_shell
     verify_shell
     printf '\033[1;32m✓\033[0m Updated to %s\n' "$(git log --oneline -1)"
