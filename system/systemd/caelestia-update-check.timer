@@ -1,0 +1,24 @@
+[Unit]
+Description=Periodic Caelestia update check
+# If the check script is gone (e.g. a half-finished install), fail the timer
+# rather than logging a start failure on every trigger.
+ConditionPathIsExecutable=%h/.local/bin/caelestia-update-check
+
+[Timer]
+# Two triggers, for the two ways this goes stale. 5 min after login catches the
+# case that actually bites: a `pacman -Syu` between sessions clobbered the plugin,
+# so you learn about it while the shell is fresh instead of hours into work.
+OnStartupSec=5min
+# Daily thereafter bounds how long a fork push from the other machine, or a new
+# upstream release, can sit unnoticed. The script itself suppresses repeats, so
+# a daily poll does NOT mean a daily popup — see its "do not NAG" section.
+OnUnitActiveSec=1d
+# Both triggers hit GitHub. Spread them so two machines waking together do not
+# fetch in lockstep, and so the login check does not compete with the shell's
+# own startup for the network.
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

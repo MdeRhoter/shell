@@ -1,0 +1,23 @@
+[Unit]
+# Companion to caelestia.service. Reports when ./update (or ./update --port) is
+# due; never applies anything. See system/bin/caelestia-update-check for why the
+# apply half is deliberately NOT automated.
+Description=Check whether a Caelestia shell update is due
+Documentation=file:%h/.config/quickshell/caelestia/UPDATE_GUIDE.md
+# notify-send needs the session bus, so do not run this before there is a session.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/caelestia-update-check
+# The check is advisory: a failed fetch, a missing repo or a dead notification
+# daemon must never leave a failed unit sitting in `systemctl --user status`.
+SuccessExitStatus=0 1 2
+# It only ever reads the repo and writes one stamp file, so give it no more room
+# than that. NoNewPrivileges also makes it structurally incapable of the sudo
+# escalation that automating the *apply* half would have required.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%S %h/.config/quickshell/caelestia/.git
