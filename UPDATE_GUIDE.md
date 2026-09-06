@@ -13,7 +13,7 @@ cd ~/.config/quickshell/caelestia
 ```
 
 `./update` rebases onto `origin/<branch>`, rebuilds + reinstalls the native plugin
-(including **M3Shapes**) **only when** `plugin/`, `extras/`, or `CMakeLists.txt`
+**only when** `plugin/`, `extras/`, or `CMakeLists.txt`
 changed, and restarts the shell. It is idempotent — when nothing changed it does
 nothing (no `sudo` prompt, no restart). The manual steps it automates are below.
 
@@ -53,6 +53,31 @@ caelestia-update-check -v        # run it now, print everything, ignore the nag 
 systemctl --user list-timers caelestia-update-check.timer
 journalctl --user -t caelestia-update    # history, including the runs that found nothing
 ```
+
+## M3Shapes is no longer ours to build (changed in v2.4.0)
+
+Upstream v2.4.0 (#1909, "build: split out m3shapes") moved M3Shapes into its own
+project, [soramanew/m3shapes](https://github.com/soramanew/m3shapes), packaged on Arch as
+**`qt6-m3shapes-git`** and a hard dependency of `caelestia-shell` >= 2.4.0.
+
+Our QML still does `import M3Shapes` in about a dozen files — including the forked
+`modules/bar/components/workspaces/Workspace.qml` — so **it is still required at runtime**.
+What changed is only who installs it. `CMakeLists.txt` has no `m3shapes` branch any more,
+and CMake accepts unknown entries in `ENABLE_MODULES` **in silence**, so passing
+`m3shapes` there is a flag that looks load-bearing and does nothing. Do not re-add it.
+
+If M3Shapes is missing the shell dies with `Type ... unavailable` across every file that
+imports it. `./update` warns and points at the fix; a rebuild cannot supply it:
+
+```bash
+yay -S qt6-m3shapes-git
+```
+
+> **On a machine still running `caelestia-shell` 2.3.0-1:** the M3Shapes files under
+> `/usr/lib/qt6/qml/M3Shapes/` are owned by *that package* (`pacman -Qo` confirms it) and
+> are all that is keeping the shell alive — they are from 2.3.0 and nothing refreshes them.
+> Upgrading the package to 2.4.0-1 removes them and pulls in `qt6-m3shapes-git` as a
+> dependency, which is the intended end state.
 
 ## Quick reference
 
@@ -98,11 +123,12 @@ itself, and then use the full flag set:
 # PREFIX=/ so files land in /usr/lib/qt6/qml (where Qt looks), not the cmake
 #   default /usr/local/usr/lib/... where they are silently ignored.
 # ENABLE_MODULES must be spelled out: omitting it on a FRESH build dir silently
-#   drops M3Shapes (an afternoon lost to that once). An existing build/ keeps the
+#   drops modules (an afternoon lost to that once). An existing build/ keeps the
 #   value in CMakeCache.txt, which is why omitting it sometimes "works".
+#   Do NOT add "m3shapes" here -- see the M3Shapes note below.
 # INSTALL_QSCONFDIR points the config install back at this repo.
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ \
-      -DINSTALL_QSCONFDIR="$PWD" -DENABLE_MODULES="extras;plugin;shell;m3shapes"
+      -DINSTALL_QSCONFDIR="$PWD" -DENABLE_MODULES="extras;plugin;shell"
 cmake --build build
 sudo cmake --install build
 # The install re-emits shell.qml onto the source as a ROOT-OWNED, watchFiles:false
