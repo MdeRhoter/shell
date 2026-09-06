@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# caelestia-update-check — tell me when a Caelestia update is DUE, never apply one.
+#
+# WHY THIS EXISTS: ./update is safe to run anytime, but nothing ever *reminds*
+# you to run it, so the three ways this setup goes stale are all silent:
+#
+#   1. installed build drifts from HEAD  — a `pacman -Syu` reinstalls the packaged
+#      plugin over ours (the clobber ./update's installed_rev() exists to catch),
+#      or you pulled QML on another machine and never rebuilt here. The shell keeps
+#      running the WRONG native code and only misbehaves later, with no obvious cause.
+#   2. origin/<branch> moves            — the other machine pushed and this one
+#      never pulled; the two boxes diverge until a manual rebase is needed.
+#   3. upstream cuts a release          — v2.3.0 -> v2.4.0 sat unnoticed for weeks.
+#
+# STRICTLY READ-ONLY. It fetches (refs only), reads the version marker, and
+# notifies. It NEVER rebases, builds, installs, restarts the shell, or touches
+# the working tree — deliberately, because the two things that would need
+# automating are exactly the two that must not be: `./update` wants sudo for
+# `cmake --install` (no tty here) and restarts the shell out from under you,
+# and `./update --port` stops for manual conflict resolution by design.
+#
+# Silent when everything is current. Run with -v to print the full state.
+#
+#   caelestia-update-check        quiet unless something is due (timer mode)
+#   caelestia-update-check -v     always print, and re-notify regardless of stamp
+
+set -uo pipefail
+
+REPO="${CAELESTIA_REPO:-$HOME/.config/quickshell/caelestia}"
+
+# A user timer has no terminal, and a git fetch that decides it wants credentials
+# would hang forever holding the unit in "activating". Both remotes are public,
+# so refusing to prompt can only ever turn a hang into a clean failure.
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=/bin/true
+
+VERBOSE=0
+case "${1:-}" in
+    -v|--verbose) VERBOSE=1 ;;
+    "") [ -t 1 ] && VERBOSE=1 ;;
+    *) printf 'usage: %s [-v]\n' "${0##*/}" >&2; exit 2 ;;
+esac
+
+say() { [ "$VERBOSE" = 1 ] && printf '%s\n' "$*"; return 0; }
+
+[ -d "$REPO/.git" ] || { say "no repo at $REPO — nothing to check"; exit 0; }
+cd "$REPO" || exit 0
+
+# Never nag mid-surgery. A half-finished rebase or a dirty tree means the user is
+# already in the middle of this exact workflow; a notification then is noise, and
+# the comparisons below would be measuring a transient HEAD anyway.
+if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+    say "rebase in progress — skipping"
+    exit 0
+fi
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+[ "$branch" != "HEAD" ] || { say "detached HEAD — skipping"; exit 0; }
+head_full="$(git rev-parse HEAD)"
+
+# Fetch is best-effort: this runs on a laptop that is regularly offline, and a
+# missing network must produce silence, not a "could not reach GitHub" popup
+# every day. On failure we simply compare against the refs we already have.
+online=1
+git fetch --quiet origin "$branch" 2>/dev/null || online=0
+git fetch --quiet --tags upstream main 2>/dev/null || online=0
+
+DUE=()   # things that need action
+INFO=()  # context lines, shown in -v and in the notification body
+
+# --- 1. Is what is INSTALLED built from what is CHECKED OUT? ---------------
+# Same marker ./update trusts: /usr/lib/caelestia/version has the source revision
+# baked in at compile time, so it reports what actually got installed rather than
+# what we think we installed. Line 3 of --terse is the revision.
+inst=""
+if [ -x /usr/lib/caelestia/version ]; then
+    inst="$(/usr/lib/caelestia/version --terse 2>/dev/null | sed -n 3p)"
+fi
+if [ -z "$inst" ]; then
+    DUE+=("no plugin installed — run ./update")
+elif [ "$inst" != "$head_full" ]; then
+    DUE+=("installed build ${inst:0:8} != HEAD ${head_full:0:8} — run ./update")
+else
+    INFO+=("installed build matches HEAD (${inst:0:8})")
+fi
+
+# --- 2. Has the other machine pushed? --------------------------------------
+if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
+    behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
+    ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
+    if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
+        # ./update refuses to auto-rebase this case (it would undo a port), so it
+        # needs a human either way — say so plainly rather than "run ./update".
+        DUE+=("diverged from origin/$branch (ahead $ahead / behind $behind) — reconcile by hand")
+    elif [ "$behind" -gt 0 ]; then
+        DUE+=("$behind fork commit(s) on origin/$branch — run ./update")
+    elif [ "$ahead" -gt 0 ]; then
+        INFO+=("$ahead local commit(s) not pushed")
+    fi
+fi
+
+# --- 3. Has upstream Caelestia cut a release? ------------------------------
+# Compare against the latest release TAG, not upstream/main's tip: ./update --port
+# targets the tag, and main is normally several unreleased commits past it, so
+# measuring to the tip would report "port due" forever on a freshly-ported branch.
+tag="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || true)"
+if [ -n "$tag" ]; then
+    if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+        INFO+=("based on latest upstream release ($tag)")
+    else
+        n="$(git rev-list --count "HEAD..$tag" 2>/dev/null || echo '?')"
+        DUE+=("upstream $tag available ($n commit(s) ahead) — run ./update --port")
+    fi
+fi
+
+[ "$online" = 1 ] || INFO+=("offline — compared against last fetched refs")
+
+# --- Report ----------------------------------------------------------------
+body="$(printf '%s\n' "${DUE[@]}" "${INFO[@]}" | sed '/^$/d')"
+if [ "$VERBOSE" = 1 ]; then
+    printf 'caelestia-update-check (%s @ %s)\n' "$branch" "${head_full:0:8}"
+    printf '%s\n' "${DUE[@]}" | sed '/^$/d' | sed 's/^/  ! /'
+    printf '%s\n' "${INFO[@]}" | sed '/^$/d' | sed 's/^/    /'
+fi
+
+# Journal trail even when clean, so "when did this last go stale" is greppable.
+printf 'due=%s\n%s\n' "${#DUE[@]}" "$body" | systemd-cat -t caelestia-update \
+    -p "$([ "${#DUE[@]}" -gt 0 ] && echo warning || echo info)" 2>/dev/null || true
+
+[ "${#DUE[@]}" -gt 0 ] || exit 0
+
+# --- Notify, but do not NAG ------------------------------------------------
+# A daily timer plus a port you are not ready to do yet = the same popup every
+# morning until you cave, which is how a useful notification gets muted forever.
+# So notify when the SET OF PENDING THINGS CHANGES, and otherwise re-remind only
+# once a week. The stamp holds a hash of the pending set; a changed hash always
+# notifies (something new is due), an unchanged one waits out RENAG_DAYS.
+RENAG_DAYS="${CAELESTIA_UPDATE_RENAG_DAYS:-7}"
+stamp="${XDG_STATE_HOME:-$HOME/.local/state}/caelestia-update-check.stamp"
+mkdir -p "$(dirname "$stamp")" 2>/dev/null
+now="$(printf '%s\n' "${DUE[@]}" | sha256sum | cut -c1-16)"
+notify=1
+if [ "$VERBOSE" != 1 ] && [ -f "$stamp" ]; then
+    prev="$(cut -d' ' -f1 "$stamp" 2>/dev/null)"
+    if [ "$prev" = "$now" ] && [ -z "$(find "$stamp" -mtime +"$RENAG_DAYS" 2>/dev/null)" ]; then
+        notify=0
+        say "(already notified about this set; next re-nag in <= ${RENAG_DAYS}d)"
+    fi
+fi
+
+if [ "$notify" = 1 ]; then
+    summary="Caelestia: ${#DUE[@]} update(s) due"
+    [ "${#DUE[@]}" = 1 ] && summary="Caelestia update due"
+    notify-send -a caelestia-update -u normal \
+        "$summary" "$(printf '%s\n' "${DUE[@]}")" 2>/dev/null || true
+    printf '%s %s\n' "$now" "$(date -Is)" > "$stamp"
+fi
+
+exit 0

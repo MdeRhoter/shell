@@ -21,6 +21,39 @@ nothing (no `sudo` prompt, no restart). The manual steps it automates are below.
 > machine, and `git push` when you finish. This avoids the divergence that requires a
 > manual rebase to untangle.
 
+## Getting told when an update is due
+
+You do not have to remember to run `./update` — `caelestia-update-check.timer` does the
+remembering. `./update` installs and enables it (and the check script into
+`~/.local/bin/`) as part of its vendored-system-files step, so both machines get it.
+
+It fires 5 min after login and once a day thereafter, and sends a desktop notification
+when any of the three ways this setup goes stale has happened:
+
+| It notices | It tells you to run |
+|---|---|
+| the installed plugin was not built from your HEAD (typically a `pacman -Syu` clobber) | `./update` |
+| the other machine pushed to `origin/<branch>` | `./update` |
+| upstream Caelestia cut a new release tag | `./update --port` |
+| local and `origin` have both moved | reconcile by hand |
+
+**It only ever reports — it never applies anything.** That is deliberate and not a
+limitation to "fix" later: `./update` needs `sudo` for `cmake --install` (a timer has no
+tty, and a NOPASSWD rule for it would be passwordless root, since `build/` is
+user-writable) and it restarts the shell out from under you; `./update --port` stops for
+manual conflict resolution by design. So the apply half stays a decision you make.
+
+It will not nag. A notification fires when the *set* of pending items changes, and an
+unchanged set is re-raised only weekly — so a port you are not ready for does not produce
+the same popup every morning until you mute it. Override with
+`CAELESTIA_UPDATE_RENAG_DAYS`.
+
+```bash
+caelestia-update-check -v        # run it now, print everything, ignore the nag stamp
+systemctl --user list-timers caelestia-update-check.timer
+journalctl --user -t caelestia-update    # history, including the runs that found nothing
+```
+
 ## Quick reference
 
 ### Check for upstream updates
