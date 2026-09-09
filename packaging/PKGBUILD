@@ -1,0 +1,165 @@
+# Maintainer: Martijn <m.derhoter@tbauctions.com>
+#
+# Package the fork's NATIVE ARTIFACTS so that pacman owns them.
+#
+# WHY THIS EXISTS. ./update's build_install() ran `sudo cmake --install` with
+# CMAKE_INSTALL_PREFIX=/, writing straight into paths owned by the AUR package
+# caelestia-shell. pacman never knew: `pacman -Qkk caelestia-shell` reported
+# "411 total files, 37 altered files", the package dated 2026-08-12 and the
+# files on disk dated 2026-09-06. Two owners for one set of files, and only one
+# of them keeping records — so every `-Syu` that touched caelestia-shell
+# silently reverted 37 files to stock and left fork QML running against stock
+# binaries until someone noticed. This package removes the second owner.
+#
+# WHAT IT DELIBERATELY DOES NOT SHIP: the QML (ENABLE_MODULES has no "shell").
+# The unit runs `qs -p ~/.config/quickshell/caelestia/shell.qml` straight out of
+# the git checkout with settings.watchFiles:true, which is the whole live-edit
+# workflow — CUSTOMIZATIONS.md leans on new QML files being picked up with no
+# rebuild. Packaging the QML as well would install a SECOND copy under
+# /etc/xdg/quickshell/caelestia that is stale the moment you edit anything, i.e.
+# exactly the two-owners confusion this package exists to end. The 37 files that
+# actually collided were all native (usr/lib/qt6/qml/Caelestia/** plus
+# usr/lib/caelestia/version), and "extras;plugin" covers precisely those.
+# To ship the QML too, add "shell" to ENABLE_MODULES below — nothing else needs
+# to change, because with the default INSTALL_QSCONFDIR the install writes to
+# $pkgdir/etc, never back onto the source tree.
+#
+# WHY provides/conflicts CAELESTIA-SHELL. Removing the AUR package would orphan
+# everything it pulled in — the icon fonts above all — and would drop
+# caelestia-cli's optdep. Claiming the name keeps that graph intact, so the full
+# runtime depends list below is carried over from the AUR PKGBUILD rather than
+# trimmed to what the native plugin alone links.
+#
+# qt6-m3shapes-git IS THE POINT OF THE depends LINE. Upstream v2.4.0 (PR #1909)
+# split M3Shapes into its own project; our CMakeLists stopped building it, but
+# ~12 QML files still `import M3Shapes`, including the forked
+# modules/bar/components/workspaces/Workspace.qml. Until now the only copies on
+# disk were /usr/lib/qt6/qml/M3Shapes/*, owned by caelestia-shell 2.3.0-1 and
+# dated 2026-08-23 — leftovers from OUR OWN build, with nothing able to refresh
+# them. A soname bump would have broken them with no rebuild path anywhere.
+# Declaring the dependency hands that file set back to a package that maintains it.
+
+pkgname=caelestia-shell-fork
+pkgver=2.4.0.r40.g3a129fa1
+pkgrel=1
+pkgdesc="Caelestia shell native plugin, built from the local fork"
+arch=('x86_64' 'aarch64')
+url='https://github.com/MdeRhoter/shell'
+license=('GPL-3.0-only')
+
+depends=(
+    'caelestia-cli'
+    'quickshell-git'
+    'glibc'
+    'gcc-libs'
+
+    # Brightness
+    'ddcutil'
+    'brightnessctl'
+
+    # Services
+    'libcava'
+    'networkmanager'
+    'lm_sensors'
+    'aubio'
+    'libpipewire'
+    'libqalculate'
+    'power-profiles-daemon'
+
+    # Fonts. Still required even though this package ships no QML — the QML that
+    # runs out of the git checkout is what references them.
+    'ttf-material-symbols-variable'
+    'ttf-rubik-vf'
+    'ttf-cascadia-code-nerd'
+
+    # Qt modules
+    'qt6-base'
+    'qt6-declarative'
+    'qt6-imageformats'
+    'qt6-m3shapes-git'
+
+    # Extra functionality
+    'swappy'
+    'fish'
+    'bash'
+)
+optdepends=(
+    'asdbctl: controlling the brightness of Apple Studio Displays'
+    'fprintd: fingerprint unlock for the lock screen'
+    'howdy-next: face unlock for the lock screen'
+)
+makedepends=('cmake' 'ninja' 'qt6-shadertools' 'git')
+provides=('caelestia-shell')
+conflicts=('caelestia-shell' 'caelestia-shell-git')
+
+# !debug: CMAKE_BUILD_TYPE=Release emits no -g, so the debug package makepkg.conf
+#         would otherwise split out is empty and only clutters PKGDEST.
+# !lto:   makepkg exports -flto in CXXFLAGS and CMake picks it up, which neither
+#         ./update nor build-arch.yml do. Keeping the flags identical to the
+#         local build is worth more here than the marginal codegen — an ABI
+#         problem that only reproduces under one of the two is the exact class
+#         of bug this repo keeps paying for.
+options=('!debug' '!lto')
+
+# No source=(): this builds the working tree in place, the same tree ./update
+# builds. A git+file:// clone would be more orthodox, but it would also pin a
+# branch name in a file that both machines share, and it would hide uncommitted
+# C++ from a build you ran precisely to test it. Uncommitted state is recorded
+# in DISTRIBUTOR instead (visible via /usr/lib/caelestia/version), so a build is
+# never silently misattributed. Note pkgver() cannot see it, so rebuild an
+# already-installed version with `makepkg -fi`.
+_repo="$startdir/.."
+_builddir="$startdir/../build-pkg"
+
+pkgver() {
+    cd "$_repo"
+    # v2.4.0-40-g3a129fa1 -> 2.4.0.r40.g3a129fa1
+    git describe --tags --long | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g'
+}
+
+build() {
+    cd "$_repo"
+
+    # Mirrors detect_accel() in ./update. makepkg.conf here has BUILDENV=(!ccache),
+    # so the launcher has to be passed explicitly or the shared ccache goes unused.
+    local accel=()
+    command -v ccache >/dev/null && accel+=(
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    )
+    command -v mold >/dev/null && accel+=(-DCMAKE_LINKER_TYPE=MOLD)
+
+    local dirty=''
+    [ -n "$(git status --porcelain)" ] && dirty=' +dirty'
+
+    # VERSION must stay numeric: CMakeLists.txt feeds it to project(VERSION ...),
+    # which rejects the .rN.gSHA form pkgver() produces. Both VERSION and
+    # GIT_REVISION are passed explicitly rather than left to CMakeLists' git
+    # fallback — in a container the workspace is owned by another user and git
+    # refuses to answer, which surfaces as the misleading "VERSION is not set and
+    # failed to get from git" documented in build-arch.yml.
+    cmake -B "$_builddir" -S "$_repo" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/ \
+        -DENABLE_MODULES="extras;plugin" \
+        -DVERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+        -DGIT_REVISION="$(git rev-parse HEAD)" \
+        -DDISTRIBUTOR="local fork (package: $pkgname)$dirty" \
+        "${accel[@]}"
+
+    cmake --build "$_builddir"
+}
+
+package() {
+    # PREFIX=/ plus DESTDIR is what lands these under $pkgdir/usr/lib rather than
+    # $pkgdir/lib: with prefix "/", GNUInstallDirs resolves INSTALL_QMLDIR to
+    # "usr/lib/qt6/qml" and INSTALL_LIBDIR to "usr/lib/caelestia" (verified by a
+    # clean configure, not inherited from a stale cache). Getting this wrong is
+    # silent locally, because /lib is a symlink to /usr/lib on a live system and
+    # only a real directory inside $pkgdir.
+    DESTDIR="$pkgdir" cmake --install "$_builddir"
+
+    # cmake installs LICENSE only as part of the "shell" module, which this
+    # package does not build.
+    install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
