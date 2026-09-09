@@ -4,3 +4,7 @@
 build/
 .cache/
 logs
+build-pkg/
+packaging/*.pkg.tar.zst
+packaging/pkg/
+packaging/src/
