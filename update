@@ -220,6 +220,13 @@ prune_image_cache() {
 # NOT WRAPPED IN sudo: makepkg refuses to run as root and escalates on its own
 # for the final `pacman -U`. Wrapping it here would break it outright.
 build_install() {
+    # Take the sudo credential BEFORE the build, not after it. makepkg escalates
+    # on its own for the final `pacman -U`, so if that prompt cannot be answered
+    # — no TTY, or an expired timestamp in a non-interactive run — the failure
+    # lands AFTER a full compile, leaving a built package on disk and nothing
+    # installed (observed 2026-09-09). `sudo -v` moves the ask to the top and is
+    # free when the timestamp is already valid.
+    sudo -v || die "sudo is required: makepkg installs the package with pacman -U"
     step "building package (makepkg)"
     # -f: needed_build can be true while the commit is unchanged (an ABI drift
     #     rebuild from section 2.5/2.6), and pkgver() would then produce a
