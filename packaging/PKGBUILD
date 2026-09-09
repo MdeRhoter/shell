@@ -40,7 +40,19 @@
 # Declaring the dependency hands that file set back to a package that maintains it.
 
 pkgname=caelestia-shell-fork
-pkgver=2.4.0.r40.g3a129fa1
+
+# COMPUTED HERE RATHER THAN IN A pkgver() FUNCTION, ON PURPOSE. makepkg rewrites
+# the pkgver= line of the PKGBUILD after every successful pkgver() run, and this
+# file is tracked — so that function dirtied the working tree on every single
+# build, showed up forever in `./update --status` as a modified file, and
+# invited a stream of no-op commits (hit immediately, 2026-09-09). With no
+# pkgver() function there is nothing for makepkg to rewrite. Nothing is lost:
+# the authoritative build identity is the GIT_REVISION baked into
+# /usr/lib/caelestia/version, which is what installed_rev() actually compares.
+#
+#   v2.4.0-40-g3a129fa1 -> 2.4.0.r40.g3a129fa1
+_repo="$startdir/.."
+pkgver="$(cd "$_repo" && git describe --tags --long | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g')"
 pkgrel=1
 pkgdesc="Caelestia shell native plugin, built from the local fork"
 arch=('x86_64' 'aarch64')
@@ -106,16 +118,10 @@ options=('!debug' '!lto')
 # branch name in a file that both machines share, and it would hide uncommitted
 # C++ from a build you ran precisely to test it. Uncommitted state is recorded
 # in DISTRIBUTOR instead (visible via /usr/lib/caelestia/version), so a build is
-# never silently misattributed. Note pkgver() cannot see it, so rebuild an
-# already-installed version with `makepkg -fi`.
-_repo="$startdir/.."
-_builddir="$startdir/../build-pkg"
-
-pkgver() {
-    cd "$_repo"
-    # v2.4.0-40-g3a129fa1 -> 2.4.0.r40.g3a129fa1
-    git describe --tags --long | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g'
-}
+# never silently misattributed. Note the version string cannot see it — two
+# builds from one commit share a pkgver — so rebuild an already-installed
+# version with `makepkg -fi`.
+_builddir="$_repo/build-pkg"
 
 build() {
     cd "$_repo"
@@ -133,7 +139,7 @@ build() {
     [ -n "$(git status --porcelain)" ] && dirty=' +dirty'
 
     # VERSION must stay numeric: CMakeLists.txt feeds it to project(VERSION ...),
-    # which rejects the .rN.gSHA form pkgver() produces. Both VERSION and
+    # which rejects the .rN.gSHA form pkgver carries. Both VERSION and
     # GIT_REVISION are passed explicitly rather than left to CMakeLists' git
     # fallback — in a container the workspace is owned by another user and git
     # refuses to answer, which surfaces as the misleading "VERSION is not set and
