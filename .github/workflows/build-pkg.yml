@@ -1,0 +1,161 @@
+# Validate that the fork still PACKAGES, not just that it compiles.
+#
+# Same doctrine as build-arch.yml, and the same deliberate non-goal: this job
+# produces nothing installable. A runner's Arch snapshot drifts from the target
+# machine's within days, and the native plugin has to be linked against the
+# libraries present where it runs (2026-08-23: libcava 0.10.7 -> 1.0.0 cost a
+# login). The .pkg.tar.zst built here is therefore examined and thrown away —
+# never uploaded, never installed. Build locally with `makepkg -si` from
+# packaging/.
+#
+# What this DOES answer, which build-arch.yml cannot:
+#   - the PKGBUILD is syntactically valid and its pkgver()/build()/package()
+#     functions actually run, after a --port rebase moved the tag out from under
+#     them;
+#   - `cmake --install` under DESTDIR still lands files in usr/lib rather than
+#     lib. That distinction is invisible locally, because /lib is a symlink to
+#     /usr/lib on a live system and only a real directory inside $pkgdir, so the
+#     failure mode is a package that silently conflicts with `filesystem` at
+#     install time;
+#   - namcap's read of the built package's ELF links vs. its declared depends.
+#     That is the automated version of the problem the qt-drift hook exists for:
+#     the dependency list rots by hand, and the library that actually broke
+#     (libcava) was never on a list anyone would have thought to write.
+#
+# OVERLAP: this recompiles the same plugin build-arch.yml does. They share a
+# ccache key prefix so the second one to run is mostly cache hits. If that stops
+# being worth it, this job subsumes build-arch's compile — drop that one to the
+# nix/format checks rather than adding a third.
+
+name: Build package on Arch
+
+on:
+  push:
+    branches:
+      - main
+      - custom-workspace-name
+    paths:
+      - 'packaging/**'
+      - 'plugin/**'
+      - 'extras/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-pkg.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    container:
+      # Lowercase literal for the same reason build-arch.yml hardcodes it:
+      # jobs.<id>.container.image is evaluated before any step runs, so the
+      # downcase-in-a-step trick from update-image.yml cannot apply here.
+      image: ghcr.io/mderhoter/shell-arch-env:latest
+
+    env:
+      # Inside the workspace so actions/cache can see it and so the unprivileged
+      # build user can write it without touching a HOME that does not exist yet.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # pkgver() runs `git describe --tags --long`, and build() derives the
+          # numeric VERSION from `--abbrev=0`. A depth-1 clone carries no tags at
+          # all and describe has to walk back to the nearest one, so the history
+          # must be present too. Same requirement, same reason, as build-arch.yml.
+          fetch-depth: 0
+
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install build tooling
+        # -Syu, not -Sy: the image is a week old by design and installing onto a
+        # partially-synced db is the classic Arch partial-upgrade trap.
+        run: pacman -Syu --needed --noconfirm ccache mold namcap
+
+      # makepkg refuses to run as root, and update-image.yml deletes the builder
+      # user it used at image build time. runuser rather than sudo so this does
+      # not depend on a sudoers rule the image also strips.
+      - name: Create an unprivileged build user
+        run: |
+          useradd -m builder
+          mkdir -p "$CCACHE_DIR"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          # Shares the pool with build-arch.yml: ccache is content-addressed, so
+          # whichever job runs second mostly hits.
+          key: ccache-arch-${{ hashFiles('plugin/**', 'extras/**', 'CMakeLists.txt') }}
+          restore-keys: |
+            ccache-arch-
+
+      - name: Configure ccache
+        # Mirrors system/ccache/ccache.conf. Without the sloppiness line the PCH
+        # defeats ccache entirely and the cache above is dead weight.
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          printf 'sloppiness = pch_defines,time_macros\nmax_size = 2G\ncompression = true\n' \
+            > "$CCACHE_DIR/ccache.conf"
+          chown -R builder:builder "$CCACHE_DIR"
+          runuser -u builder -- env CCACHE_DIR="$CCACHE_DIR" ccache --zero-stats
+
+      # --nodeps: several runtime depends are AUR-only (caelestia-cli, the three
+      # ttf-* fonts) and are not in the CI image, which carries only what the
+      # BUILD needs. Skipping the check validates the packaging path without
+      # pretending the runner can resolve the full dependency graph; namcap below
+      # is what actually inspects the declared depends.
+      - name: makepkg
+        working-directory: packaging
+        run: |
+          runuser -u builder -- env \
+            CCACHE_DIR="$CCACHE_DIR" \
+            PATH="$PATH" \
+            makepkg --nodeps --noconfirm -f
+
+      - name: ccache stats
+        run: runuser -u builder -- env CCACHE_DIR="$CCACHE_DIR" ccache --show-stats
+
+      - name: Package layout
+        working-directory: packaging
+        # A package containing a top-level lib/, bin/ or etc/ that should have
+        # been usr/-prefixed is the DESTDIR trap described at the top. Fail loudly
+        # here rather than at `pacman -U` time on the target machine.
+        run: |
+          pkg=$(ls -1 ./*.pkg.tar.zst | head -1)
+          echo "== $pkg =="
+          tar -tf "$pkg" | grep -vE '^\.|/$' | sort
+          if tar -tf "$pkg" | grep -qE '^(lib|bin|sbin|usr/etc)/'; then
+            echo "::error::package contains non-usr-prefixed paths (DESTDIR/GNUInstallDirs regression)"
+            exit 1
+          fi
+
+      - name: namcap
+        working-directory: packaging
+        # Advisory: namcap flags missing and redundant depends by reading the
+        # built ELFs, but it cannot see the AUR-only entries and will say so.
+        # Printed, never fatal — a dependency it cannot resolve is not a reason
+        # to fail a branch.
+        run: |
+          namcap PKGBUILD || true
+          namcap ./*.pkg.tar.zst || true
+
+      - name: Check for unresolved symbols
+        # The same ldd -r test the pacman hook runs, applied to what was just
+        # packaged. Catches a DT_NEEDED that resolves on the developer's box but
+        # not in a clean environment — an undeclared dependency, which is one of
+        # the few ABI questions a runner can legitimately answer.
+        run: |
+          status=0
+          while IFS= read -r so; do
+            out="$(ldd -r "$so" 2>&1 | grep -E 'not found|undefined symbol')" || continue
+            if [ -n "$out" ]; then
+              echo "::error file=$so::unresolved symbols in $so"
+              printf '%s\n' "$out" | sed 's/^/    /'
+              status=1
+            fi
+          done < <(find build-pkg -type f -name '*.so' | sort)
+          exit $status
