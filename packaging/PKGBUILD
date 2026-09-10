@@ -52,7 +52,12 @@ pkgname=caelestia-shell-fork
 #
 #   v2.4.0-40-g3a129fa1 -> 2.4.0.r40.g3a129fa1
 _repo="$startdir/.."
-pkgver="$(cd "$_repo" && git describe --tags --long | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g')"
+# `git -C` rather than `$(cd "$_repo" && ...)`: namcap parses a PKGBUILD in
+# bash RESTRICTED mode, where cd is forbidden, so the cd form made the whole
+# file unparseable ("line 55: cd: restricted" -> "PKGBUILD is not a valid
+# PKGBUILD") and silently disabled the PKGBUILD half of the lint while the
+# package half kept working. Caught by CI 2026-09-10.
+pkgver="$(git -C "$_repo" describe --tags --long | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g')"
 pkgrel=1
 pkgdesc="Caelestia shell native plugin, built from the local fork"
 arch=('x86_64' 'aarch64')
