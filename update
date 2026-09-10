@@ -72,6 +72,82 @@ installed_rev() {
     /usr/lib/caelestia/version --terse 2>/dev/null | sed -n 3p
 }
 
+# Runtime dependencies the PACKAGE declares that pacman cannot resolve for us.
+#
+# makepkg -s installs missing REPO deps by itself; an AUR-only one it cannot see
+# at all, so it dies with "target not found" — but only AFTER pkgver(), the
+# dependency check and a sudo prompt. Checking here surfaces the whole set in
+# one message before any of that.
+#
+# DERIVED FROM packaging/PKGBUILD, never hardcoded. The previous version tested
+# for one file (M3Shapes) and so reported exactly one of the two AUR deps that
+# were actually missing on 2026-09-10; ttf-rubik-vf then killed makepkg a minute
+# later. Keeping the list current is the PKGBUILD's job — this only reads it.
+#
+# Warns, never blocks: a shell that is currently running is proof that a missing
+# dependency need not stop an update.
+check_declared_deps() {
+    local pkgbuild="$REPO/packaging/PKGBUILD"
+    local deps missing repo_missing aur_missing helper h d probe
+    [ -f "$pkgbuild" ] || return 0
+
+    # Quoted entries only, read textually rather than by sourcing the PKGBUILD:
+    # it runs git in pkgver() and dereferences $_repo, so sourcing would execute
+    # things and could fail for reasons unrelated to dependencies.
+    deps=$(sed -n '/^depends=(/,/^)/p' "$pkgbuild" | sed 's/#.*//' \
+           | grep -oE "'[^']+'" | tr -d "'")
+    [ -n "$deps" ] || return 0
+
+    # `pacman -T` exits 127 when something is unsatisfied — which is precisely
+    # the case this exists to catch. Without `|| true` that status ends the run
+    # under `set -e`: the same exit-status trap already fixed in 2.5 and 2.6.
+    # Unquoted on purpose; the split into words is what feeds pacman the list.
+    # shellcheck disable=SC2086
+    missing=$(pacman -T $deps 2>/dev/null || true)
+    [ -n "$missing" ] || return 0
+
+    repo_missing=''
+    aur_missing=''
+    for d in $missing; do
+        probe=${d%%[<>=]*}          # strip any version constraint before lookup
+        if pacman -Si "$probe" >/dev/null 2>&1; then
+            repo_missing="$repo_missing $probe"
+        else
+            aur_missing="$aur_missing $probe"
+        fi
+    done
+
+    [ -n "$repo_missing" ] && \
+        printf '\033[1;33m!\033[0m Missing repo deps (makepkg -s will pull these):%s\n' \
+            "$repo_missing" >&2
+
+    [ -n "$aur_missing" ] || return 0
+
+    # Name the helper that is actually installed. The old text said `paru`,
+    # which is not on every box here — a copy-pasteable command that reports
+    # "command not found" is worse than none.
+    helper=''
+    for h in paru yay pikaur; do
+        if command -v "$h" >/dev/null 2>&1; then helper=$h; break; fi
+    done
+    printf '\033[1;33m!\033[0m Missing AUR deps — makepkg resolves with plain pacman and WILL fail:%s\n' \
+        "$aur_missing" >&2
+    if [ -n "$helper" ]; then
+        printf '      %s -S%s\n' "$helper" "$aur_missing" >&2
+    else
+        printf '      no AUR helper found (paru/yay/pikaur) — install them by hand first\n' >&2
+    fi
+
+    # M3Shapes deserves its own line: it is the one dep a rebuild can never
+    # supply, because upstream v2.4.0 split it out and nothing here builds it.
+    case " $aur_missing " in
+        *" qt6-m3shapes-git "*)
+            printf '  qt6-m3shapes-git is a RUNTIME import in a dozen of our QML files and this repo no\n' >&2
+            printf '  longer builds it (v2.4.0 split it out), so no rebuild can ever supply it.\n' >&2
+            ;;
+    esac
+}
+
 # --- Image cache prune -----------------------------------------------------
 # The shell's image cache (CachingImage -> CachingImageProvider -> ImageCacher)
 # has NO eviction of its own: every distinct (source, size, fillMode) triple
@@ -231,9 +307,9 @@ build_install() {
     # -f: needed_build can be true while the commit is unchanged (an ABI drift
     #     rebuild from section 2.5/2.6), and pkgver() would then produce a
     #     version makepkg already has a tarball for and would refuse to rebuild.
-    # -s: pulls missing repo deps. An AUR-only one (qt6-m3shapes-git, the ttf-*
-    #     fonts) is not resolvable this way and fails naming the package, which
-    #     is the right loud failure.
+    # -s: pulls missing repo deps. An AUR-only one is not resolvable this way
+    #     and makepkg dies naming it — which is correct but late, so
+    #     check_declared_deps reports the whole set before we get here.
     # --noconfirm answers makepkg's own prompts; pacman still hard-errors on a
     #     file conflict rather than overwriting, which is the behaviour we want.
     ( cd "$REPO/packaging" && makepkg -sif --noconfirm ) \
@@ -593,15 +669,8 @@ fi
 # again. Test something this repo actually installs.
 [ -f /usr/lib/qt6/qml/Caelestia/libcaelestia-coreplugin.so ] || needs_build=true
 
-# M3Shapes is required at runtime (a dozen `import M3Shapes` in our QML) but is
-# no longer ours to build, so a rebuild can never fix its absence — say so
-# instead, with the command that does. Warn only; a shell that is currently
-# running is proof enough that it must not block the update.
-if [ ! -f /usr/lib/qt6/qml/M3Shapes/libm3shapesplugin.so ]; then
-    printf '\033[1;33m!\033[0m M3Shapes is not installed, and this repo no longer builds it (upstream v2.4.0 split it out).\n' >&2
-    printf '  Our QML imports it in a dozen places, so the shell will fail with "Type ... unavailable":\n' >&2
-    printf '      paru -S qt6-m3shapes-git\n' >&2
-fi
+# Report every declared dependency that is missing, before the build starts.
+check_declared_deps
 
 # Also rebuild when what is INSTALLED was not built from this checkout.
 #
