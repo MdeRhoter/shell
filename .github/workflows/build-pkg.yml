@@ -135,13 +135,23 @@ jobs:
 
       - name: namcap
         working-directory: packaging
-        # Advisory: namcap flags missing and redundant depends by reading the
-        # built ELFs, but it cannot see the AUR-only entries and will say so.
-        # Printed, never fatal — a dependency it cannot resolve is not a reason
-        # to fail a branch.
-        run: |
-          namcap PKGBUILD || true
-          namcap ./*.pkg.tar.zst || true
+        # Only the PACKAGE is linted. `namcap PKGBUILD` is deliberately NOT run:
+        # namcap parses a PKGBUILD by sourcing it under bash restricted mode with
+        # no PATH, so the source-time pkgver dies on "git: command not found" /
+        # "sed: command not found" and namcap declares the whole file invalid. A
+        # static pkgver is the only form it can read, and a static pkgver is
+        # exactly what makepkg rewrites on every build — the problem f15c6069
+        # removed. Guarding the substitution with a fallback would make it parse,
+        # at the price of a build silently producing pkgver=0 and installing as a
+        # downgrade over 2.4.0, which is not a trade this repo makes.
+        #
+        # The package lint is the half worth having anyway: it reads the built
+        # ELFs, so it catches a library that is linked but NOT declared — the
+        # libcava shape. It cannot see QML-level, subprocess or font deps, so it
+        # also reports the reverse direction ("Dependency included, but may not
+        # be needed" for caelestia-cli, ddcutil, the ttf-* fonts and friends) as
+        # expected noise. Printed, never fatal.
+        run: namcap ./*.pkg.tar.zst || true
 
       - name: Check for unresolved symbols
         # The same ldd -r test the pacman hook runs, applied to what was just
