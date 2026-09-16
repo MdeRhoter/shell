@@ -1,0 +1,25 @@
+[Unit]
+# Companion to caelestia.service. Detects the wedged-at-100%-CPU failure and clears
+# it with SIGSTOP/SIGCONT, which preserves the session where a restart would not.
+# See system/bin/caelestia-spin-watch for why a signal is the right recovery and
+# why detection needs both the CPU and the IPC signal.
+Description=Watch for a wedged Caelestia shell and unstick it
+Documentation=file:%h/.config/quickshell/caelestia/system/bin/caelestia-spin-watch
+# The probe talks to the shell's IPC socket in XDG_RUNTIME_DIR, so there is nothing
+# to watch before there is a session.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/caelestia-spin-watch
+# Two 15s CPU samples plus two 5s IPC probes, worst case, and only on the path
+# where it actually acts. 120s is headroom, not an expectation.
+TimeoutStartSec=120
+# Exit 0 is "healthy or recovered". Exit 1 means the signal did NOT clear the wedge
+# and a human needs to restart — that is exactly the case that should show up red in
+# `systemctl --user status`, so it is deliberately NOT listed as a success.
+# It reads /proc and signals one pid; it writes nothing at all.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only

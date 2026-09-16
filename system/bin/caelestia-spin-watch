@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# caelestia-spin-watch — catch the "shell wedged at 100% CPU" failure and clear it
+# with a signal, instead of restarting the shell out from under you.
+#
+# WHY THIS EXISTS: on 2026-09-15 caelestia.service sat at 98.6% of one core for 97
+# minutes straight. The process was alive and its layer surfaces were still mapped,
+# so nothing looked crashed — but the event loop had stopped dispatching: the bar
+# was frozen, `notify-send` timed out (qs owns org.freedesktop.Notifications), and
+# notifs.json had not been written for over three hours. There is no crash, no QML
+# error and no log line, so NOTHING reports this on its own. You just notice, twenty
+# minutes late, that the shell stopped answering.
+#
+# THE RECOVERY IS A SIGNAL, NOT A RESTART. Attaching a debugger cleared it: ptrace
+# sends SIGSTOP and then SIGCONT on detach, and the moment it did, CPU went 100% ->
+# 0%, the process left state R for S, IPC answered in 21ms and the pending
+# notifs.json write landed. That is the whole fix this script automates. It is worth
+# preferring over `systemctl restart` because it keeps the session — open drawers,
+# notification history, lock state — which a restart throws away.
+#
+# WHAT THE SIGNAL-SENSITIVITY MEANS: a spin that a STOP/CONT clears, with the main
+# thread in glib's ppoll, points at a busy-poll on a dead or errored file descriptor
+# — the loop keeps waking on a socket nothing consumes. Suspected trigger is the
+# quickshell-git r10 -> r14 bump (commit 92cb890, which reworked QObject disconnect
+# on deleteLater across io/socket.cpp, pipewire and the Hyprland IPC connection),
+# but that is NOT proven: the preceding boot ran the same r14 healthily for 1h41m,
+# so a socket has to actually error first. Until it is proven, this script is the
+# mitigation, not the fix.
+#
+# DETECTION DELIBERATELY NEEDS BOTH SIGNALS, because either alone false-positives:
+#   - sustained CPU alone     — legitimate during wallpaper processing or launcher
+#                               indexing; the shell is working, just busy.
+#   - a missing IPC reply alone — legitimate for a moment under load.
+# A shell that is merely busy STILL ANSWERS IPC, in about 20ms. One that is wedged
+# returns an empty body with exit 0, which is why this checks output and not $?.
+#
+#   caelestia-spin-watch        quiet unless it acts (timer mode)
+#   caelestia-spin-watch -v     always print the measurements
+#   caelestia-spin-watch -n     detect and report, but never signal (dry run)
+
+set -uo pipefail
+
+SHELL_QML="${CAELESTIA_SHELL_QML:-$HOME/.config/quickshell/caelestia/shell.qml}"
+# 15s is long enough that a burst of real work averages out below the threshold,
+# and short enough that the timer interval still bounds how long a wedge survives.
+SAMPLE_SECS="${CAELESTIA_SAMPLE_SECS:-15}"
+# Percent of ONE core. Healthy idle measured 0-1%; the wedge measured 98.6%
+# sustained. 80 leaves room for genuine load without reaching into wedge territory.
+CPU_THRESHOLD="${CAELESTIA_CPU_THRESHOLD:-80}"
+# Healthy round trip is ~22ms. 5s is pure margin.
+IPC_TIMEOUT="${CAELESTIA_IPC_TIMEOUT:-5}"
+
+VERBOSE=0
+DRYRUN=0
+case "${1:-}" in
+    -v|--verbose) VERBOSE=1 ;;
+    -n|--dry-run) DRYRUN=1; VERBOSE=1 ;;
+    "") [ -t 1 ] && VERBOSE=1 ;;
+    *) echo "usage: caelestia-spin-watch [-v|--verbose] [-n|--dry-run]" >&2; exit 64 ;;
+esac
+
+say()  { [ "$VERBOSE" = 1 ] && echo "$*"; return 0; }
+warn() { echo "$*" >&2; }
+
+CLK_TCK=$(getconf CLK_TCK 2>/dev/null) || CLK_TCK=100
+
+cpu_ticks() { awk '{print $14+$15}' "/proc/$1/stat" 2>/dev/null; }
+
+# Percent of one core over the sample window, integer.
+cpu_pct() {
+    local pid=$1 a b
+    a=$(cpu_ticks "$pid") || return 1
+    [ -n "$a" ] || return 1
+    sleep "$SAMPLE_SECS"
+    b=$(cpu_ticks "$pid") || return 1
+    [ -n "$b" ] || return 1
+    echo $(( (b - a) * 100 / (CLK_TCK * SAMPLE_SECS) ))
+}
+
+# True only if the shell actually answers. `qs ipc show` exits 0 with an EMPTY body
+# when the event loop is not dispatching, so the body is the signal, not the code.
+ipc_alive() {
+    local out
+    out=$(timeout "$IPC_TIMEOUT" qs -p "$SHELL_QML" ipc show 2>/dev/null)
+    [ -n "$out" ]
+}
+
+PID=$(systemctl --user show caelestia.service -p MainPID --value 2>/dev/null)
+if [ -z "$PID" ] || [ "$PID" = "0" ] || [ ! -d "/proc/$PID" ]; then
+    say "caelestia.service is not running; nothing to watch."
+    exit 0
+fi
+
+PCT=$(cpu_pct "$PID")
+if [ -z "$PCT" ]; then
+    say "pid $PID went away mid-sample; nothing to do."
+    exit 0
+fi
+
+say "pid $PID: ${PCT}% of one core over ${SAMPLE_SECS}s (threshold ${CPU_THRESHOLD}%)"
+
+if [ "$PCT" -lt "$CPU_THRESHOLD" ]; then
+    say "below threshold — healthy."
+    exit 0
+fi
+
+if ipc_alive; then
+    say "at ${PCT}% but IPC still answers — busy, not wedged. Leaving it alone."
+    exit 0
+fi
+
+RSS=$(awk '/VmRSS/{print $2}' "/proc/$PID/status" 2>/dev/null)
+STATE=$(awk '{print $3}' "/proc/$PID/stat" 2>/dev/null)
+warn "WEDGED: pid $PID at ${PCT}% of one core, state ${STATE:-?}, RSS ${RSS:-?} kB, IPC silent for ${IPC_TIMEOUT}s."
+
+if [ "$DRYRUN" = 1 ]; then
+    warn "dry run — not signalling."
+    exit 2
+fi
+
+# The actual mitigation. SIGSTOP parks every thread; SIGCONT resumes them, and the
+# interrupted-and-restarted poll is what breaks the loop. Harmless if the diagnosis
+# was wrong: a healthy process cannot tell it was paused for half a second.
+kill -STOP "$PID" 2>/dev/null || { warn "could not SIGSTOP $PID"; exit 1; }
+sleep 0.5
+kill -CONT "$PID" 2>/dev/null || { warn "could not SIGCONT $PID — process is STOPPED, resume it by hand!"; exit 1; }
+warn "sent SIGSTOP/SIGCONT to $PID; re-measuring."
+
+PCT_AFTER=$(cpu_pct "$PID")
+if ipc_alive; then
+    warn "RECOVERED: ${PCT}% -> ${PCT_AFTER:-?}%, IPC answering again. Session preserved."
+    exit 0
+fi
+
+warn "STILL WEDGED after the signal: ${PCT_AFTER:-?}% of one core, IPC still silent."
+warn "The signal did not clear it this time — restart by hand with:"
+warn "    systemctl --user restart caelestia.service"
+exit 1

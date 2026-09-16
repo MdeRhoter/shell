@@ -1,0 +1,20 @@
+[Unit]
+Description=Periodic check for a wedged Caelestia shell
+# If the script is gone (e.g. a half-finished install), fail the timer rather than
+# logging a start failure on every trigger. NOTE: the directive is
+# ConditionFileIsExecutable — ConditionPathIsExecutable does not exist, and systemd
+# silently ignores it with "Unknown key ... in section [Unit]".
+ConditionFileIsExecutable=%h/.local/bin/caelestia-spin-watch
+
+[Timer]
+# The wedge is silent and open-ended — the observed one ran 97 minutes before anyone
+# noticed. A 3-minute poll bounds that to roughly the length of one coffee refill.
+OnStartupSec=3min
+OnUnitActiveSec=3min
+# The check costs one 15s idle sample in the common case, so there is no need to
+# smear it across machines the way the update check's GitHub fetch does.
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
