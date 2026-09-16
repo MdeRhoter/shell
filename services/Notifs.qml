@@ -17,6 +17,10 @@ Singleton {
     id: root
 
     property list<NotifData> list: []
+    // Nothing else evicts the store, and every entry kept here is a live object
+    // with its own timers and bindings. list is newest-first, so slicing keeps
+    // the newest and drops the tail.
+    readonly property int maxStored: 200
     readonly property list<NotifData> notClosed: list.filter(n => !n.closed)
     readonly property list<NotifData> popups: list.filter(n => n.popup)
 
@@ -61,7 +65,7 @@ Singleton {
         id: saveTimer
 
         interval: 1000
-        onTriggered: storage.setText(JSON.stringify(root.notClosed.map(n => ({
+        onTriggered: storage.setText(JSON.stringify(root.notClosed.slice(0, root.maxStored).map(n => ({
                     time: n.time,
                     id: n.id,
                     summary: n.summary,
@@ -106,7 +110,8 @@ Singleton {
         path: `${Paths.state}/notifs.json`
         onLoaded: {
             const data = JSON.parse(text());
-            for (const notif of data) {
+            data.sort((a, b) => new Date(b.time) - new Date(a.time));
+            for (const notif of data.slice(0, root.maxStored)) {
                 const properties = Object.assign({}, notif);
 
                 // Backwards compatibility for old notifications
