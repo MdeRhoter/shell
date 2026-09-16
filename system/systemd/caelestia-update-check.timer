@@ -2,7 +2,7 @@
 Description=Periodic Caelestia update check
 # If the check script is gone (e.g. a half-finished install), fail the timer
 # rather than logging a start failure on every trigger.
-ConditionPathIsExecutable=%h/.local/bin/caelestia-update-check
+ConditionFileIsExecutable=%h/.local/bin/caelestia-update-check
 
 [Timer]
 # Two triggers, for the two ways this goes stale. 5 min after login catches the
