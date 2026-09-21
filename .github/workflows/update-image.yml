@@ -34,8 +34,10 @@ jobs:
       # "MdeRhoter" -- so interpolating github.repository_owner straight into
       # the tag produced `ghcr.io/MdeRhoter/shell-arch-env:latest`, which buildx
       # rejects outright: "invalid tag ...: repository name must be lowercase".
-      # That is why this image had never been published despite the workflow
-      # existing. Actions has no lowercase expression function, hence the step.
+      # That blocked the first publish (run 32629258561, 2026-08-23, failed in
+      # 10s); with this step the re-dispatch 5 minutes later published the image
+      # and it has existed since, which is what build-arch.yml has been pulling.
+      # Actions has no lowercase expression function, hence the step.
       - name: Lowercase the image owner
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/shell-arch-env" >> "$GITHUB_ENV"
 
