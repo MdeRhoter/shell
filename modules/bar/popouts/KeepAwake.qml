@@ -1,5 +1,6 @@
 import QtQuick.Layouts
 import Caelestia.Config
+import Caelestia.I18n
 import qs.components
 import qs.components.controls
 import qs.services
@@ -14,7 +15,7 @@ ColumnLayout {
 
     StyledText {
         text: IdleInhibitor.enabled
-            ? qsTr("Active since %1").arg(Qt.formatTime(IdleInhibitor.enabledSince, GlobalConfig.services.useTwelveHourClock ? "hh:mm a" : "hh:mm"))
+            ? qsTr("Active since %1").arg(Qt.formatTime(IdleInhibitor.enabledSince, Units.twelveHourClock ? "hh:mm a" : "hh:mm"))
             : qsTr("Normal power management")
         color: Colours.palette.m3onSurfaceVariant
         font: Tokens.font.body.small
