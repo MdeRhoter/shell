@@ -80,7 +80,7 @@ Item {
                 if (digit >= 1 && digit <= 9) {
                     const win = root.filteredWindows.find(w => w.workspace?.id === digit);
                     if (win) {
-                        Hypr.dispatch("focuswindow address:" + win.lastIpcObject.address);
+                        Hypr.dispatch(Hypr.usingLua ? `hl.dsp.focus({ window = "address:${win.lastIpcObject.address}" })` : `focuswindow address:${win.lastIpcObject.address}`);
                         root.screenState.windowswitcher = false;
                         event.accepted = true;
                     }
@@ -90,7 +90,7 @@ Item {
             onAccepted: {
                 const win = root.filteredWindows[list.currentIndex];
                 if (win) {
-                    Hypr.dispatch("focuswindow address:" + win.lastIpcObject.address);
+                    Hypr.dispatch(Hypr.usingLua ? `hl.dsp.focus({ window = "address:${win.lastIpcObject.address}" })` : `focuswindow address:${win.lastIpcObject.address}`);
                     root.screenState.windowswitcher = false;
                 }
             }

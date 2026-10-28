@@ -22,7 +22,7 @@ Item {
     StateLayer {
         radius: Tokens.rounding.small
         onClicked: {
-            Hypr.dispatch("focuswindow address:" + root.window.lastIpcObject.address);
+            Hypr.dispatch(Hypr.usingLua ? `hl.dsp.focus({ window = "address:${root.window.lastIpcObject.address}" })` : `focuswindow address:${root.window.lastIpcObject.address}`);
             root.screenState.windowswitcher = false;
         }
     }
