@@ -35,7 +35,7 @@ StyledRect {
         cursorShape: Qt.PointingHandCursor
 
         onClicked: {
-            Hypr.dispatch("togglespecialworkspace " + WorkspaceNameConfig.specialWorkspace);
+            Hypr.toggleSpecial(WorkspaceNameConfig.specialWorkspace);
         }
     }
 
