@@ -130,6 +130,13 @@ Item {
         }
 
         Popout {
+            name: "mousebattery"
+            sourceComponent: MouseBattery {
+                popouts: root.popouts
+            }
+        }
+
+        Popout {
             name: "workspaceName"
             sourceComponent: WorkspaceInfo {}
         }

@@ -196,7 +196,7 @@ StyledRect {
                         }
                     }
                 }
-                // Mouse battery, Logitech via Solaar. Same self-collapse as above:
+                // Mouse battery, Logitech via OpenLogi. Same self-collapse as above:
                 // without it a "mouse" icon would sit in the bar with no mouse paired.
                 DelegateChoice {
                     roleValue: "mouseBattery"
