@@ -4,7 +4,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Battery levels for wireless input peripherals read via Solaar (HID++).
+// Battery levels for wireless input peripherals read via OpenLogi (HID++).
 // Currently only the Logitech mouse on the Bolt receiver is exposed; the
 // Keychron keyboard is on a 2.4GHz dongle that reports no battery to Linux.
 Singleton {
@@ -17,6 +17,7 @@ Singleton {
 
     readonly property int warnLevel: 20 // notify at or below this %
     readonly property int pollInterval: 600000 // 10 minutes
+    property var lastUpdated: null // Date of the last successful read
 
     // Per-device latch so we warn once per low-battery episode, not every poll.
     property var _warned: ({})
@@ -30,51 +31,31 @@ Singleton {
     }
 
     function _parse(text: string): void {
-        const lines = text.split("\n");
-        const devHeader = /^ {2}(\d+): (.+?)\s*$/; // "  2: MX Master 3S"
-        const kindRe = /^\s+Kind\s*:\s*(\w+)/;
-        const battRe = /Battery:\s*(\d+)%(?:,\s*(?:BatteryStatus\.)?(\w+))?/;
+        // One device per line, e.g.
+        // "  └─ slot 2 ● MX Master 4 (mouse, wpid=b042, battery=65% full (discharging))"
+        const devRe = /^[\s├└│─]*(?:slot\s+(\d+)\s+)?\S\s+(.+?)\s+\((\w+),/;
+        const battRe = /battery=(\d+)%[^(,)]*(?:\((\w+)\))?/;
 
         const result = [];
-        let cur = null;
-        for (const line of lines) {
-            const h = line.match(devHeader);
-            if (h) {
-                if (cur)
-                    result.push(cur);
-                cur = {
-                    index: h[1],
-                    name: h[2],
-                    kind: "unknown",
-                    percentage: -1,
-                    charging: false,
-                    status: ""
-                };
-                continue;
-            }
-            if (!cur)
-                continue;
-
-            const k = line.match(kindRe);
-            if (k) {
-                cur.kind = k[1].toLowerCase();
-                continue;
-            }
-
+        for (const line of text.split("\n")) {
+            const d = line.match(devRe);
             const b = line.match(battRe);
-            if (b) {
-                cur.percentage = parseInt(b[1]);
-                const s = (b[2] ?? "").toUpperCase();
-                cur.status = s;
-                cur.charging = s === "CHARGING" || s === "RECHARGING";
-            }
+            if (!d || !b)
+                continue;
+            const s = (b[2] ?? "").toUpperCase();
+            result.push({
+                index: d[1] ?? "",
+                name: d[2],
+                kind: d[3].toLowerCase(),
+                percentage: parseInt(b[1]),
+                charging: s === "CHARGING" || s === "RECHARGING",
+                status: s
+            });
         }
-        if (cur)
-            result.push(cur);
 
-        const valid = result.filter(d => d.percentage >= 0);
-        root.devices = valid;
-        root._checkWarnings(valid);
+        root.devices = result;
+        root.lastUpdated = new Date();
+        root._checkWarnings(result);
     }
 
     function _checkWarnings(devs): void {
@@ -97,7 +78,7 @@ Singleton {
         id: proc
 
         running: false
-        command: ["solaar", "show"]
+        command: ["openlogi", "list"]
 
         stdout: StdioCollector {
             onStreamFinished: root._parse(text)
