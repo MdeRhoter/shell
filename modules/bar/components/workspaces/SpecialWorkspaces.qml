@@ -15,12 +15,14 @@ Item {
 
     required property HyprlandMonitor monitor
 
-    readonly property int activeSpecialId: monitor?.lastIpcObject.specialWorkspace?.id ?? 0
-    readonly property var wsIds: {
+    // Keyed by name: since Hyprland 0.57 special workspaces have no numeric id
+    // (IPC gives an address; Quickshell maps every special to id -1).
+    readonly property string activeSpecialName: monitor?.lastIpcObject.specialWorkspace?.name ?? ""
+    readonly property var wsNames: {
         const allMonitors = !Config.bar.workspaces.perMonitor;
-        return Hypr.workspaces.values.filter(w => w.name.startsWith("special:") && (allMonitors || w.monitor === root.monitor)).map(w => w.id);
+        return Hypr.workspaces.values.filter(w => w.name.startsWith("special:") && (allMonitors || w.monitor === root.monitor)).map(w => w.name);
     }
-    readonly property int activeIdx: wsIds.indexOf(activeSpecialId)
+    readonly property int activeIdx: activeSpecialName ? wsNames.indexOf(activeSpecialName) : -1
     readonly property real maxViewY: Math.max(0, view.contentHeight - height)
 
     readonly property Workspace activeWs: {
@@ -158,12 +160,14 @@ Item {
         onContentHeightChanged: root.ensureVisible()
 
         model: ScriptModel {
-            values: root.wsIds
+            values: root.wsNames
         }
 
         delegate: Workspace {
-            activeWsId: root.activeSpecialId
-            ws: modelData
+            activeWsId: 0
+            activeWsName: root.activeSpecialName
+            ws: -1
+            wsName: modelData
             monitor: root.monitor
             offMonitorColour: Colours.palette.m3outline
             displayType: Config.bar.workspaces.specialDisplayType
@@ -223,9 +227,8 @@ Item {
 
             const ws = view.itemAt(event.x, event.y - view.y) as Workspace;
             if (ws) {
-                const match = Hypr.workspaces.values.find(w => w.id === ws.ws);
-                if (match)
-                    Hypr.toggleSpecial(Hypr.trimWsName(match.name));
+                if (ws.wsName)
+                    Hypr.toggleSpecial(Hypr.trimWsName(ws.wsName));
             } else {
                 Hypr.toggleSpecial("special");
             }
