@@ -32,7 +32,7 @@ when any of the three ways this setup goes stale has happened:
 
 | It notices | It tells you to run |
 |---|---|
-| the installed plugin was not built from your HEAD (typically a `pacman -Syu` clobber) | `./update` |
+| the installed plugin is behind your HEAD in native code (`plugin/`, `extras/`, `CMakeLists.txt`, `packaging/`) — QML-only commits are already live and do not count | `./update` |
 | the other machine pushed to `origin/<branch>` | `./update` |
 | upstream Caelestia cut a new release tag | `./update --port` |
 | local and `origin` have both moved | reconcile by hand |

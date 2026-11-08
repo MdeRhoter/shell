@@ -76,12 +76,25 @@ inst=""
 if [ -x /usr/lib/caelestia/version ]; then
     inst="$(/usr/lib/caelestia/version --terse 2>/dev/null | sed -n 3p)"
 fi
+#
+# A different revision is only STALE if the native sources differ. The package
+# ships the plugin and extras only; the QML runs straight from this checkout, so
+# a QML-only commit is live the moment it is checked out and needs no rebuild.
+# Same paths ./update's own needs_build test uses, plus packaging/ (a PKGBUILD
+# change alters what gets built even when the sources do not). If the installed
+# revision is not in this repo (e.g. built on the other machine, or a rebase
+# rewrote it), we cannot diff it, so fall back to calling it stale.
+NATIVE_PATHS=(plugin extras CMakeLists.txt packaging)
 if [ -z "$inst" ]; then
     DUE+=("no plugin installed — run ./update")
-elif [ "$inst" != "$head_full" ]; then
-    DUE+=("installed build ${inst:0:8} != HEAD ${head_full:0:8} — run ./update")
-else
+elif [ "$inst" = "$head_full" ]; then
     INFO+=("installed build matches HEAD (${inst:0:8})")
+elif ! git cat-file -e "${inst}^{commit}" 2>/dev/null; then
+    DUE+=("installed build ${inst:0:8} is not in this repo (HEAD ${head_full:0:8}) — run ./update")
+elif ! git diff --quiet "$inst" "$head_full" -- "${NATIVE_PATHS[@]}" 2>/dev/null; then
+    DUE+=("installed build ${inst:0:8} != HEAD ${head_full:0:8} (native code changed) — run ./update")
+else
+    INFO+=("installed build ${inst:0:8} differs from HEAD ${head_full:0:8} in QML only — live, no rebuild needed")
 fi
 
 # --- 2. Has the other machine pushed? --------------------------------------
