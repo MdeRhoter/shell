@@ -75,7 +75,7 @@ When windows are in `special:magic`, a count badge appears below the group lette
 Shows a `system_update` icon (highlighted when updates are available) with the pending package count below. The fly-out lists each package as `name  oldVer → newVer`. Clicking launches `garuda-update` in the configured terminal.
 
 **Files:**
-- `services/Updates.qml` — singleton; runs `checkupdates` on startup and every hour
+- `services/Updates.qml` — singleton; runs `checkupdates` on startup and every hour. Checks the exit code (0 = updates, 2 = none, anything else = error) and puts failures in `Updates.error`, so a broken repo (such as a rotated signing key) shows as an error instead of "up to date"
 - `modules/bar/components/PendingUpdates.qml` — bar component
 - `modules/bar/popouts/UpdatesInfo.qml` — fly-out content
 

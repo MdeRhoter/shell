@@ -10,7 +10,8 @@ StyledRect {
     id: root
 
     readonly property bool hasUpdates: Updates.count > 0
-    readonly property color colour: hasUpdates ? Colours.palette.m3tertiary : Colours.palette.m3secondary
+    readonly property bool hasError: !Updates.loading && Updates.error.length > 0
+    readonly property color colour: hasError ? Colours.palette.m3error : hasUpdates ? Colours.palette.m3tertiary : Colours.palette.m3secondary
 
     implicitWidth: Tokens.sizes.bar.innerWidth
     implicitHeight: layout.implicitHeight + Tokens.padding.small * 2
@@ -36,7 +37,7 @@ StyledRect {
         MaterialIcon {
             anchors.horizontalCenter: parent.horizontalCenter
 
-            text: root.hasUpdates ? "system_update" : "system_update_alt"
+            text: root.hasError ? "sync_problem" : root.hasUpdates ? "system_update" : "system_update_alt"
             color: root.colour
             animate: true
         }
