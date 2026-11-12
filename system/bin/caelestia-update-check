@@ -102,9 +102,21 @@ if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
     behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
     ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
     if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
-        # ./update refuses to auto-rebase this case (it would undo a port), so it
-        # needs a human either way — say so plainly rather than "run ./update".
-        DUE+=("diverged from origin/$branch (ahead $ahead / behind $behind) — reconcile by hand")
+        # Same test ./update uses (unseen_local_commits there; keep in sync): if
+        # origin has carried every local commit at some point, the other machine
+        # ported and force-pushed, and ./update adopts that by itself. Anything
+        # else needs a human, and ./update prints exactly what to run.
+        seen=()
+        while read -r h; do
+            git cat-file -e "$h^{commit}" 2>/dev/null && seen+=("$h")
+        done < <(awk '{print $1; print $2}' "$(git rev-parse --git-path "logs/refs/remotes/origin/$branch")" 2>/dev/null \
+                     | grep -v '^0\{40\}$' | sort -u)
+        [ "${#seen[@]}" -gt 0 ] || seen=("refs/remotes/origin/$branch")
+        if [ -z "$(git rev-list HEAD --not "${seen[@]}" -- 2>/dev/null)" ]; then
+            DUE+=("origin/$branch was rewritten by a port on the other machine — run ./update")
+        else
+            DUE+=("diverged from origin/$branch (ahead $ahead / behind $behind) — run ./update for what to do")
+        fi
     elif [ "$behind" -gt 0 ]; then
         DUE+=("$behind fork commit(s) on origin/$branch — run ./update")
     elif [ "$ahead" -gt 0 ]; then

@@ -21,6 +21,30 @@ nothing (no `sudo` prompt, no restart). The manual steps it automates are below.
 > machine, and `git push` when you finish. This avoids the divergence that requires a
 > manual rebase to untangle.
 
+### Prebuilt plugin from CI (no local compile)
+
+When a rebuild is due, `./update` first tries the package that `build-pkg.yml` built
+for a commit with the same native code as HEAD (the `caelestia-shell-fork-pkg`
+artifact, kept for 30 days). It installs that package only if:
+
+1. `qt6-base`, `qt6-declarative` and `qt6-multimedia` are exactly the versions CI
+   built against (the plugin uses Qt private API), and
+2. every `.so` in the package passes `ldd -r` against this machine's libraries.
+
+Otherwise, or without a logged-in `gh`, it builds locally with `makepkg` as before.
+`CAELESTIA_LOCAL_BUILD=1 ./update` or `./update --force-build` always builds locally.
+
+### After a port pushed from the other machine
+
+A port rewrites the branch, so the other machine sees local and `origin` as
+diverged. `./update` handles this itself: if `origin` has carried every local
+commit at some point (checked against the remote-tracking reflog), it saves the
+old tip as `backup/pre-adopt-<date>`, resets onto `origin` and carries on.
+If there are local commits that never reached `origin`, it stops and prints
+the exact commands for your case (cherry-pick onto the port, push your own
+port, or `git pull --rebase`). It never suggests a force-push from the
+machine that did not port.
+
 ## Getting told when an update is due
 
 You do not have to remember to run `./update` — `caelestia-update-check.timer` does the
@@ -35,7 +59,7 @@ when any of the three ways this setup goes stale has happened:
 | the installed plugin is behind your HEAD in native code (`plugin/`, `extras/`, `CMakeLists.txt`, `packaging/`) — QML-only commits are already live and do not count | `./update` |
 | the other machine pushed to `origin/<branch>` | `./update` |
 | upstream Caelestia cut a new release tag | `./update --port` |
-| local and `origin` have both moved | reconcile by hand |
+| local and `origin` have both moved | `./update` (adopts a port from the other machine by itself; otherwise prints what to run) |
 
 **It only ever reports — it never applies anything.** That is deliberate and not a
 limitation to "fix" later: `./update` needs `sudo` for `cmake --install` (a timer has no

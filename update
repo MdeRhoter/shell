@@ -87,6 +87,66 @@ native_differs() {
     ! git diff --quiet "$1" "$2" -- "${NATIVE_PATHS[@]}"
 }
 
+# Local commits that origin/<branch> has NEVER carried, as far as this clone
+# knows. Checked against every value the remote-tracking ref has ever had (its
+# reflog), not just the current one, because that is what tells the two kinds of
+# divergence apart:
+#
+#   - the OTHER machine ported and force-pushed: every local commit was on origin
+#     before the rewrite, so this prints nothing, and adopting origin loses no
+#     work (2026-11-12: the laptop was told to "push the port first", a port it
+#     never made; following that advice would have force-pushed the stale
+#     pre-port history over the real port);
+#   - THIS machine ported, or committed while the other one pushed: the rewritten
+#     or new commits were never on origin, so they are printed.
+#
+# Keep in sync with the copy in system/bin/caelestia-update-check.
+unseen_local_commits() {
+    local ref="refs/remotes/origin/$1" h
+    local seen=()
+    # Read the raw log, not `git reflog show`: each line holds the OLD and the
+    # NEW value, and the old one is often the only record of the pre-port tip
+    # (a clone does not log the tracking ref's initial value, so its first
+    # entry is the forced update itself).
+    while read -r h; do
+        # Reflog entries can outlive their objects after a gc; skip those.
+        git cat-file -e "$h^{commit}" 2>/dev/null && seen+=("$h")
+    done < <(awk '{print $1; print $2}' "$(git rev-parse --git-path "logs/$ref")" 2>/dev/null \
+                 | grep -v '^0\{40\}$' | sort -u)
+    [ "${#seen[@]}" -gt 0 ] || seen=("$ref")
+    git rev-list HEAD --not "${seen[@]}" --
+}
+
+# Origin-only commits with no rebased counterpart in local history. A rebase
+# keeps author date and subject, so a pair that matches on both is the same
+# change before and after a port. What is left over was either dropped on
+# purpose during the port (superseded by upstream) or pushed by another machine
+# after the port began; a force-push would discard both, so they are listed.
+unmatched_origin_commits() {
+    local branch="$1" keys h at s
+    keys="$(git log --format='%at %s' "origin/$branch..HEAD")"
+    git log --format='%h %at %s' "HEAD..origin/$branch" | while read -r h at s; do
+        grep -qxF -- "$at $s" <<<"$keys" || printf '%s %s\n' "$h" "$s"
+    done
+}
+
+# Reset onto a rewritten origin. Only called when unseen_local_commits is empty,
+# so no commit is lost; the old tip is kept as a branch anyway. Uncommitted
+# edits are carried across the same way `git pull --autostash` would.
+adopt_rewritten_origin() {
+    local branch="$1" backup stashed=false
+    backup="backup/pre-adopt-$(date +%Y%m%d-%H%M%S)"
+    git branch "$backup" HEAD
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        git stash push -q -m "./update: adopt rewritten origin/$branch" && stashed=true
+    fi
+    git reset -q --hard "origin/$branch"
+    if [ "$stashed" = true ] && ! git stash pop -q; then
+        die "Adopted origin/$branch, but your uncommitted edits conflict with it. They are kept in 'git stash list'; resolve, then re-run ./update."
+    fi
+    step "origin/$branch was rewritten elsewhere (a port) and holds every commit you had → adopted it (old tip: $backup)"
+}
+
 # Runtime dependencies the PACKAGE declares that pacman cannot resolve for us.
 #
 # makepkg -s installs missing REPO deps by itself; an AUR-only one it cannot see
@@ -329,6 +389,97 @@ build_install() {
     #     file conflict rather than overwriting, which is the behaviour we want.
     ( cd "$REPO/packaging" && makepkg -sif --noconfirm ) \
         || die "makepkg failed — see packaging/PKGBUILD"
+}
+
+# --- Prebuilt package from CI ----------------------------------------------
+# build-pkg.yml builds the same PKGBUILD on every push that touches native code
+# and uploads the package as a workflow artifact. Installing that skips a
+# ~2-10 min local compile, which on the laptop is most of what ./update costs.
+#
+# The worry that kept CI packages uninstalled until 2026-11-12 is real: a
+# runner's Arch snapshot is not this machine, and the plugin must link against
+# the libraries installed HERE (2026-08-23: libcava 0.10.7 -> 1.0.0 cost a
+# login). So the artifact is only a shortcut, and is refused unless both checks
+# pass, in which case we build locally exactly as before:
+#
+#   1. Qt matches EXACTLY (version without pkgrel). The plugin uses
+#      Qt_6_PRIVATE_API symbols, whose ABI carries no compatibility promise
+#      across Qt releases, and ldd -r only proves the symbols exist, not that
+#      their layouts agree. build-env.txt in the artifact records CI's versions.
+#   2. Every .so in the package resolves against THIS system (ldd -r on the
+#      unpacked files). Their RUNPATH is $ORIGIN-relative, so they resolve each
+#      other inside the unpacked tree, not the installed old copies. That is the
+#      libcava case: a soname or symbol that CI had and this machine lacks.
+#
+# The artifact must come from a commit whose NATIVE tree equals HEAD's; a
+# QML-only commit on top does not change what would be built. Needs `gh`
+# logged in; without it, or offline, this quietly returns 1.
+CI_WORKFLOW=build-pkg.yml
+CI_ARTIFACT=caelestia-shell-fork-pkg
+CI_QT_PKGS=(qt6-base qt6-declarative qt6-multimedia)
+
+install_ci_package() {
+    local tmp rc
+    tmp="$(mktemp -d)"
+    if _install_ci_package "$1" "$tmp"; then rc=0; else rc=1; fi
+    rm -rf "$tmp"
+    return $rc
+}
+
+_install_ci_package() {
+    local branch="$1" tmp="$2" slug head run="" sha="" r s pkg so bad name ver mine
+    command -v gh >/dev/null 2>&1 || { step "gh not installed → no CI package"; return 1; }
+    gh auth status >/dev/null 2>&1 || { step "gh not logged in → no CI package"; return 1; }
+    slug="$(git remote get-url origin | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+    head="$(git rev-parse HEAD)"
+
+    while read -r r s; do
+        [ -n "$s" ] || continue
+        native_differs "$s" "$head" && continue
+        run="$r"; sha="$s"; break
+    done < <(gh run list --repo "$slug" --workflow "$CI_WORKFLOW" --branch "$branch" \
+                --status success --limit 30 --json databaseId,headSha \
+                -q '.[] | "\(.databaseId) \(.headSha)"' 2>/dev/null)
+    [ -n "$run" ] || { step "no successful CI build matches HEAD's native code → building locally"; return 1; }
+
+    step "downloading CI package from run $run (${sha:0:8})"
+    if ! gh run download "$run" --repo "$slug" -n "$CI_ARTIFACT" -D "$tmp" >/dev/null 2>&1; then
+        step "run $run has no '$CI_ARTIFACT' artifact (older run, or expired) → building locally"
+        return 1
+    fi
+    pkg="$(find "$tmp" -maxdepth 1 -name '*.pkg.tar.zst' | head -1)"
+    [ -n "$pkg" ] && [ -f "$tmp/build-env.txt" ] \
+        || { step "CI artifact is incomplete → building locally"; return 1; }
+
+    # Check 1: Qt identical, ignoring pkgrel.
+    for name in "${CI_QT_PKGS[@]}"; do
+        ver="$(awk -v n="$name" '$1==n {sub(/-[^-]*$/, "", $2); print $2}' "$tmp/build-env.txt")"
+        mine="$(pacman -Q "$name" 2>/dev/null | awk '{sub(/-[^-]*$/, "", $2); print $2}')"
+        if [ -z "$ver" ] || [ "$ver" != "$mine" ]; then
+            step "CI built against $name ${ver:-?}, this machine has ${mine:-none} → building locally"
+            return 1
+        fi
+    done
+
+    # Check 2: every shared object links against this system.
+    mkdir "$tmp/root"
+    bsdtar -xf "$pkg" -C "$tmp/root" 2>/dev/null || tar -xf "$pkg" -C "$tmp/root" \
+        || { step "could not unpack the CI package → building locally"; return 1; }
+    bad=""
+    while IFS= read -r so; do
+        if ldd -r "$so" 2>&1 | grep -qE 'not found|undefined symbol'; then bad="$so"; break; fi
+    done < <(find "$tmp/root" -type f -name '*.so*' | sort)
+    if [ -n "$bad" ]; then
+        step "CI package does not link here (${bad#"$tmp/root"}) → building locally"
+        ldd -r "$bad" 2>&1 | grep -E 'not found|undefined symbol' | head -3 | sed 's/^/    /'
+        return 1
+    fi
+
+    step "installing CI package $(basename "$pkg")"
+    sudo pacman -U --noconfirm "$pkg" || { step "pacman -U failed → building locally"; return 1; }
+    [ "$(installed_rev || true)" = "$sha" ] \
+        || die "installed the CI package but /usr/lib/caelestia/version does not report ${sha:0:8}"
+    return 0
 }
 
 # Restart the shell THROUGH SYSTEMD when the user unit exists, because that unit
@@ -652,16 +803,65 @@ old="$(git rev-parse HEAD)"
 # the freshly-ported branch back onto the STALE pre-port origin and silently
 # undoing the port (it happened: the rebase "skipped previously applied" the
 # custom commits and reset us to the old base). Refuse instead of rewriting.
+#
+# Which side holds the port decides what to do, and unseen_local_commits tells
+# them apart: if origin has carried every local commit at some point, origin is
+# the rewritten side and adopting it is safe; otherwise THIS side has commits
+# origin never saw, and only a human can say whether they are a port to push or
+# new work to rebase.
 if git fetch --quiet origin "$branch" 2>/dev/null; then
     ahead="$(git rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)"
     behind="$(git rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo 0)"
     if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-        printf '\033[1;31m✗\033[0m Local and origin/%s have diverged (ahead %s / behind %s).\n' "$branch" "$ahead" "$behind" >&2
-        printf '  If you just ran ./update --port, this is expected — push the port first:\n' >&2
-        printf '      git push --force-with-lease origin %s\n' "$branch" >&2
-        force_push_hint >&2
-        printf '  Otherwise reconcile by hand. Refusing to auto-rebase so the port is not undone.\n' >&2
-        exit 1
+        unseen="$(unseen_local_commits "$branch")"
+        if [ -z "$unseen" ]; then
+            adopt_rewritten_origin "$branch"
+        else
+            n_unseen="$(wc -l <<<"$unseen")"
+            printf '\033[1;31m✗\033[0m Local and origin/%s have diverged (ahead %s / behind %s),\n' "$branch" "$ahead" "$behind" >&2
+            printf '  and %s local commit(s) were never on origin:\n' "$n_unseen" >&2
+            git log --no-walk=unsorted --format='      %h %s' $(head -10 <<<"$unseen") >&2
+            [ "$n_unseen" -le 10 ] || printf '      … and %s more\n' "$((n_unseen - 10))" >&2
+            # Did origin itself get rewritten (a force-push from the other
+            # machine), or did it only move forward? @{1} is the value before
+            # the most recent update of the tracking ref.
+            prev_origin="$(git rev-parse -q --verify "refs/remotes/origin/$branch@{1}" 2>/dev/null || true)"
+            if [ -n "$prev_origin" ] && ! git merge-base --is-ancestor "$prev_origin" "origin/$branch" 2>/dev/null; then
+                # Both at once: the other machine ported, and these were
+                # committed here meanwhile. A pull --rebase would replay the
+                # whole pre-port history too; carry over only the new commits.
+                printf '\n  origin/%s was rewritten by a port on the other machine. Move your new commits onto it:\n' "$branch" >&2
+                printf '      git branch backup/pre-adopt-%s\n' "$(date +%Y%m%d)" >&2
+                printf '      git reset --hard origin/%s\n' "$branch" >&2
+                printf '      git cherry-pick %s\n' "$(tac <<<"$unseen" | cut -c1-8 | tr '\n' ' ')" >&2
+                printf '  then re-run ./update. Never force-push from here: it would undo the port.\n' >&2
+                exit 1
+            fi
+            # A port moves the branch onto a newer upstream base. If both sides
+            # sit on the same one, nobody ported: these are ordinary commits
+            # made on both machines, and a force-push is never the answer.
+            if git rev-parse -q --verify upstream/main >/dev/null 2>&1 \
+                && [ "$(git merge-base HEAD upstream/main 2>/dev/null)" = "$(git merge-base "origin/$branch" upstream/main 2>/dev/null)" ]; then
+                printf '\n  Both machines committed since the last sync (no port involved). Replay yours on top:\n' >&2
+                printf '      git pull --rebase    # then re-run ./update\n' >&2
+                printf '  Never force-push here: it would delete the commits the other machine pushed.\n' >&2
+                exit 1
+            fi
+            printf '\n  If you ran ./update --port on THIS machine, push the port:\n' >&2
+            printf '      git push --force-with-lease origin %s\n' "$branch" >&2
+            force_push_hint >&2
+            missing="$(unmatched_origin_commits "$branch")"
+            if [ -n "$missing" ]; then
+                printf '  \033[1;33m!\033[0m That push would discard these origin commits, which have no counterpart here\n' >&2
+                printf '    (dropped as superseded during the port, or pushed from the other machine since):\n' >&2
+                sed 's/^/      /' <<<"$missing" >&2
+                printf '    Cherry-pick any you still need before pushing.\n' >&2
+            fi
+            printf '\n  If you did NOT port here, those are new local commits — never force-push. Replay them:\n' >&2
+            printf '      git pull --rebase    # then re-run ./update\n' >&2
+            printf '  Refusing to auto-rebase so a port is never undone.\n' >&2
+            exit 1
+        fi
     fi
 fi
 
@@ -814,8 +1014,14 @@ fi
 
 # --- 3. Build + install (only if needed) -----------------------------------
 if [ "$needs_build" = true ]; then
-    step "native inputs changed → rebuilding"
-    build_install
+    # CAELESTIA_LOCAL_BUILD=1 skips the CI package (e.g. to test uncommitted C++;
+    # --force-build always builds locally too).
+    if [ "${CAELESTIA_LOCAL_BUILD:-0}" != 1 ] && install_ci_package "$branch"; then
+        step "native inputs changed → installed the CI-built package (no local compile)"
+    else
+        step "native inputs changed → rebuilding"
+        build_install
+    fi
 else
     step "no native changes — skipping rebuild"
 fi
