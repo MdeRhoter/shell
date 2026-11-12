@@ -93,6 +93,7 @@ depends=(
     'qt6-base'
     'qt6-declarative'
     'qt6-imageformats'
+    'qt6-multimedia'
     'qt6-m3shapes-git'
 
     # Extra functionality
