@@ -1,12 +1,17 @@
-# Validate that the fork still PACKAGES, not just that it compiles.
+# Validate that the fork still PACKAGES, not just that it compiles — and, on a
+# push, publish the package as an artifact that ./update installs instead of
+# compiling locally.
 #
-# Same doctrine as build-arch.yml, and the same deliberate non-goal: this job
-# produces nothing installable. A runner's Arch snapshot drifts from the target
-# machine's within days, and the native plugin has to be linked against the
-# libraries present where it runs (2026-08-23: libcava 0.10.7 -> 1.0.0 cost a
-# login). The .pkg.tar.zst built here is therefore examined and thrown away —
-# never uploaded, never installed. Build locally with `makepkg -si` from
-# packaging/.
+# PUBLISHED, BUT NOT TRUSTED BLINDLY. Until 2026-11-12 this job threw its package
+# away, on the grounds that a runner's Arch snapshot drifts from the target
+# machine's within days and the native plugin has to link against the libraries
+# present where it runs (2026-08-23: libcava 0.10.7 -> 1.0.0 cost a login). That
+# risk is still the design constraint; it is now handled on the CONSUMER side.
+# install_ci_package() in ./update refuses the artifact, and builds locally as
+# before, unless (1) the Qt versions recorded in build-env.txt match the
+# machine's exactly — the plugin uses Qt_6_PRIVATE_API — and (2) every .so in
+# the package passes `ldd -r` against the machine's own libraries. Keep the
+# package list in "Record build environment" in sync with CI_QT_PKGS there.
 #
 # What this DOES answer, which build-arch.yml cannot:
 #   - the PKGBUILD is syntactically valid and its pkgver()/build()/package()
@@ -169,3 +174,23 @@ jobs:
             fi
           done < <(find build-pkg -type f -name '*.so' | sort)
           exit $status
+
+      # build-env.txt is what ./update compares against the local Qt before it
+      # will install this package (see the header). Recorded only after every
+      # check above passed, so a published artifact is always a validated one.
+      - name: Record build environment
+        if: github.event_name != 'pull_request'
+        working-directory: packaging
+        run: pacman -Q qt6-base qt6-declarative qt6-multimedia | tee build-env.txt
+
+      - name: Upload package
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          # ./update looks this name up (CI_ARTIFACT); rename both together.
+          name: caelestia-shell-fork-pkg
+          path: |
+            packaging/*.pkg.tar.zst
+            packaging/build-env.txt
+          if-no-files-found: error
+          retention-days: 30
