@@ -1,6 +1,7 @@
 import QtQuick.Layouts
 import Caelestia.Config
 import Caelestia.I18n
+import Caelestia.State
 import qs.components
 import qs.components.controls
 import qs.services
@@ -14,8 +15,8 @@ ColumnLayout {
     }
 
     StyledText {
-        text: IdleInhibitor.enabled
-            ? qsTr("Active since %1").arg(Qt.formatTime(IdleInhibitor.enabledSince, Units.twelveHourClock ? "hh:mm a" : "hh:mm"))
+        text: RuntimeState.inhibitIdle
+            ? qsTr("Active since %1").arg(Tr.formatDateTime(new Date(RuntimeState.inhibitingIdleSince), Units.twelveHourClock ? "hh:mm a" : "hh:mm"))
             : qsTr("Normal power management")
         color: Colours.palette.m3onSurfaceVariant
         font: Tokens.font.body.small
@@ -23,7 +24,7 @@ ColumnLayout {
 
     SwitchRow {
         label: qsTr("Prevent sleep")
-        checked: IdleInhibitor.enabled
-        onToggled: IdleInhibitor.enabled = checked
+        checked: RuntimeState.inhibitIdle
+        onToggled: RuntimeState.inhibitIdle = checked
     }
 }
