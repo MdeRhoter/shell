@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Caelestia.Config
+import Caelestia.State
 import qs.components
 import qs.services
 import qs.utils
@@ -43,7 +44,7 @@ StyledRect {
         // here — collapsing reserves no space and drops the surrounding spacing,
         // which is the same visual result the old `active: false` gave.
         if (entry.id === "idleInhibitor")
-            return !IdleInhibitor.enabled;
+            return !RuntimeState.inhibitIdle;
         if (entry.id === "mouseBattery")
             return Peripherals.mouse === null;
         return false;
@@ -160,7 +161,7 @@ StyledRect {
                         Item {
                             id: inhibitor
 
-                            property real iconHeight: IdleInhibitor.enabled ? coffeeIcon.implicitHeight : 0
+                            property real iconHeight: RuntimeState.inhibitIdle ? coffeeIcon.implicitHeight : 0
 
                             implicitWidth: coffeeIcon.implicitWidth
                             implicitHeight: Math.round(iconHeight)
@@ -180,8 +181,8 @@ StyledRect {
                                 color: Colours.palette.m3primary
                                 fill: 1
 
-                                scale: IdleInhibitor.enabled ? 1 : 0.5
-                                opacity: IdleInhibitor.enabled ? 1 : 0
+                                scale: RuntimeState.inhibitIdle ? 1 : 0.5
+                                opacity: RuntimeState.inhibitIdle ? 1 : 0
 
                                 Behavior on opacity {
                                     Anim {
