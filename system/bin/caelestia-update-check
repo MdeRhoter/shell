@@ -10,7 +10,9 @@
 #      running the WRONG native code and only misbehaves later, with no obvious cause.
 #   2. origin/<branch> moves            — the other machine pushed and this one
 #      never pulled; the two boxes diverge until a manual rebase is needed.
-#   3. upstream cuts a release          — v2.3.0 -> v2.4.0 sat unnoticed for weeks.
+#   3. upstream moves on                — v2.3.0 -> v2.4.0 sat unnoticed for weeks, and
+#      after v2.5.0 upstream shipped features on main for two months without
+#      a release. Tracks upstream/main; see system/lib/upstream.sh.
 #
 # STRICTLY READ-ONLY. It fetches (refs only), reads the version marker, and
 # notifies. It NEVER rebases, builds, installs, restarts the shell, or touches
@@ -124,17 +126,33 @@ if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
     fi
 fi
 
-# --- 3. Has upstream Caelestia cut a release? ------------------------------
-# Compare against the latest release TAG, not upstream/main's tip: ./update --port
-# targets the tag, and main is normally several unreleased commits past it, so
-# measuring to the tip would report "port due" forever on a freshly-ported branch.
-tag="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || true)"
-if [ -n "$tag" ]; then
-    if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
-        INFO+=("based on latest upstream release ($tag)")
+# --- 3. Has upstream Caelestia got something we don't? --------------------
+# Compare against upstream/main, not only the release tag: upstream shipped 10
+# features on main in the two months after v2.5.0 without cutting a release.
+# Only feat/fix/perf commits make a port "due" (see system/lib/upstream.sh for
+# the filter and why); housekeeping is counted in the info line only.
+# The logic lives in the repo so ./update shows exactly the same thing.
+if [ -f system/lib/upstream.sh ]; then
+    # shellcheck source=../lib/upstream.sh
+    . system/lib/upstream.sh
+    mapfile -t relevant < <(upstream_missing_relevant)
+    summary="$(upstream_summary)"
+    if [ "${#relevant[@]}" -gt 0 ]; then
+        DUE+=("${#relevant[@]} upstream feat/fix/perf commit(s) to port — run ./update --port")
+        # Show what is new, so the notification says whether it is worth it.
+        # Capped: a long gap must not produce a screen-high popup.
+        for line in "${relevant[@]:0:6}"; do
+            DUE+=("  • ${line#* }")
+        done
+        [ "${#relevant[@]}" -gt 6 ] && DUE+=("  • … and $(( ${#relevant[@]} - 6 )) more (git log HEAD..upstream/main)")
+    elif [ -n "$summary" ]; then
+        INFO+=("$summary — housekeeping only, nothing to port")
     else
-        n="$(git rev-list --count "HEAD..$tag" 2>/dev/null || echo '?')"
-        DUE+=("upstream $tag available ($n commit(s) ahead) — run ./update --port")
+        INFO+=("level with $UPSTREAM_REF")
+    fi
+    tag="$(upstream_latest_tag)"
+    if [ -n "$tag" ] && ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+        DUE+=("upstream release $tag is out")
     fi
 fi
 
@@ -159,7 +177,8 @@ printf 'due=%s\n%s\n' "${#DUE[@]}" "$body" | systemd-cat -t caelestia-update \
 # morning until you cave, which is how a useful notification gets muted forever.
 # So notify when the SET OF PENDING THINGS CHANGES, and otherwise re-remind only
 # once a week. The stamp holds a hash of the pending set; a changed hash always
-# notifies (something new is due), an unchanged one waits out RENAG_DAYS.
+# notifies (something new is due), an unchanged one waits out RENAG_DAYS. A new
+# upstream feat/fix/perf commit changes the set, so each one notifies once.
 RENAG_DAYS="${CAELESTIA_UPDATE_RENAG_DAYS:-7}"
 stamp="${XDG_STATE_HOME:-$HOME/.local/state}/caelestia-update-check.stamp"
 mkdir -p "$(dirname "$stamp")" 2>/dev/null
@@ -174,8 +193,10 @@ if [ "$VERBOSE" != 1 ] && [ -f "$stamp" ]; then
 fi
 
 if [ "$notify" = 1 ]; then
-    summary="Caelestia: ${#DUE[@]} update(s) due"
-    [ "${#DUE[@]}" = 1 ] && summary="Caelestia update due"
+    # Count actions, not the "  •" detail lines listing upstream commits.
+    actions="$(printf '%s\n' "${DUE[@]}" | grep -cv '^  ' || true)"
+    summary="Caelestia: $actions update(s) due"
+    [ "$actions" = 1 ] && summary="Caelestia update due"
     notify-send -a caelestia-update -u normal \
         "$summary" "$(printf '%s\n' "${DUE[@]}")" 2>/dev/null || true
     printf '%s %s\n' "$now" "$(date -Is)" > "$stamp"

@@ -11,7 +11,8 @@
 #   ./update                sync fork, rebuild if needed, restart, verify
 #   ./update --status       read-only: what is running vs HEAD vs upstream
 #   ./update --force-build  rebuild + reinstall even if nothing looks changed
-#   ./update --port         rebase custom commits onto the latest upstream tag
+#   ./update --port         rebase custom commits onto upstream/main
+#   ./update --port --tag   ... onto the latest upstream release tag instead
 #   ./update --prune-cache  prune the image cache only (no build, no restart)
 #
 # Nothing here runs on a schedule, on purpose: this script wants sudo and
@@ -33,6 +34,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO"
+# upstream_missing / upstream_summary / upstream_latest_tag — shared with
+# system/bin/caelestia-update-check so both report the same thing.
+# shellcheck source=system/lib/upstream.sh
+. "$REPO/system/lib/upstream.sh"
 
 # THE BUILD FLAGS LIVE IN packaging/PKGBUILD NOW (ENABLE_MODULES, the install
 # prefix, the accelerators). Do not reintroduce them here: two copies of that
@@ -684,13 +689,20 @@ status_report() {
     if [ "$(pacman -Qq caelestia-shell 2>/dev/null)" = caelestia-shell ]; then
         printf '                 \033[1;33mcaelestia-shell (AUR) is installed — it conflicts with our package\033[0m\n'
     fi
-    tag="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || true)"
-    if [ -n "$tag" ]; then
-        if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
-            printf 'upstream       : %s \033[1;32m(based on it)\033[0m\n' "$tag"
+    # Last-fetched refs only: --status promises no network.
+    if git rev-parse --verify --quiet "$UPSTREAM_REF" >/dev/null; then
+        up="$(upstream_summary)"
+        nrel="$(upstream_missing_relevant | grep -c . || true)"
+        if [ -z "$up" ]; then
+            printf 'upstream       : %s \033[1;32m(level)\033[0m\n' "$UPSTREAM_REF"
+        elif [ "$nrel" -gt 0 ]; then
+            printf 'upstream       : %s \033[1;33m— port due: ./update --port\033[0m\n' "$up"
         else
-            printf 'upstream       : %s \033[1;33m(port due — ./update --port)\033[0m\n' "$tag"
+            printf 'upstream       : %s \033[1;32m(housekeeping only)\033[0m\n' "$up"
         fi
+        tag="$(upstream_latest_tag)"
+        [ -n "$tag" ] && printf '                 latest release %s%s\n' "$tag" \
+            "$(git merge-base --is-ancestor "$tag" HEAD 2>/dev/null && echo ' (included)' || echo ' (NOT included)')"
     fi
     sync_system_files check
     printf 'working tree   : %s modified file(s)\n' "$(git status --porcelain | wc -l)"
@@ -717,10 +729,20 @@ port_upstream() {
     step "fetch upstream (tags + main)"
     git fetch --quiet --tags upstream main || die "Could not fetch upstream."
 
-    # Port onto the latest upstream RELEASE TAG (matches how fadcaf28 landed on
-    # v2.0.3), not a moving branch tip — releases are the stable port targets.
-    target="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || true)"
-    [ -n "$target" ] || die "Could not determine latest upstream tag."
+    # Port onto upstream/main by default (since 2026-11-21): upstream ships
+    # features on main for months between releases, and the 2026-11-12 port was
+    # already done onto main by hand. --tag keeps the old release-only target.
+    # Pin main to a commit hash so the backup name and messages refer to what
+    # was actually ported onto, not a ref that moves on the next fetch.
+    if [ "$PORT_TO_TAG" = 1 ]; then
+        target="$(upstream_latest_tag)"
+        [ -n "$target" ] || die "Could not determine latest upstream tag."
+    else
+        target="$(git rev-parse --short "$UPSTREAM_REF")"
+        step "target: $UPSTREAM_REF at $target — $(git log -1 --format=%s "$target")"
+        printf '  Upstream commits this brings in that matter:\n'
+        upstream_missing_relevant | sed 's/^/    /'
+    fi
 
     base="$(git merge-base HEAD "$target")"
     if [ "$base" = "$(git rev-parse "$target^{commit}")" ]; then
@@ -728,7 +750,7 @@ port_upstream() {
         exit 0
     fi
 
-    backup="backup/${branch}-pre-${target}"
+    backup="backup/${branch}-pre-$(git describe --tags "$target" 2>/dev/null || echo "$target")"
     if git rev-parse --verify --quiet "refs/heads/$backup" >/dev/null; then
         backup="${backup}-$(git rev-parse --short HEAD)"  # avoid clobbering an earlier attempt
     fi
@@ -765,8 +787,15 @@ port_upstream() {
     exit 0
 }
 
+PORT_TO_TAG=0
 case "${1:-}" in
-    --port)   port_upstream ;;             # never returns
+    --port)
+        case "${2:-}" in
+            --tag) PORT_TO_TAG=1 ;;
+            "") ;;
+            *) die "Unknown --port option '$2' (supported: --tag)." ;;
+        esac
+        port_upstream ;;                   # never returns
     --status) status_report; exit 0 ;;     # read-only, no network
     # Prune only. Useful after a shell that predates the sourceSize clamp has
     # already filled the cache with oversized entries, without forcing a rebuild.
@@ -794,7 +823,7 @@ case "${1:-}" in
         exit 0
         ;;
     "")       ;;
-    *)        die "Unknown argument '$1' (supported: --port, --status, --force-build)." ;;
+    *)        die "Unknown argument '$1' (supported: --port [--tag], --status, --force-build, --prune-cache)." ;;
 esac
 
 # --- 1. Sync ---------------------------------------------------------------
@@ -1045,26 +1074,27 @@ else
 fi
 
 # --- 5. Upstream Caelestia check (read-only, never merges) -----------------
-# ./update only syncs our fork (origin). New upstream Caelestia releases are
-# ported by hand — see fadcaf28 "Port custom fork onto caelestia v2.0.3". This
-# step just *reports* if upstream/main has moved past where our fork is based,
-# so we know when a manual port is due. It fetches read-only and never fails
-# the update (network hiccup, missing remote → silently skipped).
+# ./update only syncs our fork (origin). Upstream changes come in through
+# ./update --port, which stops for manual conflict resolution by design. This
+# step only REPORTS what upstream/main has that we do not, filtered to
+# feat/fix/perf (system/lib/upstream.sh). It never fails the update (network
+# hiccup, missing remote -> silently skipped).
 if git remote get-url upstream >/dev/null 2>&1; then
     if git fetch --quiet --tags upstream main 2>/dev/null; then
-        # Compare against the latest RELEASE TAG, not upstream/main's tip:
-        # ./update --port targets the tag, and main is normally several
-        # unreleased commits past it — measuring to main's tip would nag
-        # "port due" forever even on a freshly-ported branch.
-        tag="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || true)"
-        if [ -n "$tag" ]; then
-            if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
-                printf '\033[1;32m✓\033[0m Up to date with latest upstream Caelestia release (%s).\n' "$tag"
-            else
-                behind="$(git rev-list --count "HEAD..$tag" 2>/dev/null || echo '?')"
-                printf '\033[1;33m!\033[0m Newer upstream Caelestia release available: %s (%s commit(s) not in your branch).\n' "$tag" "$behind"
-                printf '  Run ./update --port to rebase your custom commits onto it.\n'
-            fi
+        mapfile -t relevant < <(upstream_missing_relevant)
+        up="$(upstream_summary)"
+        if [ "${#relevant[@]}" -gt 0 ]; then
+            printf '\033[1;33m!\033[0m Upstream Caelestia: %s\n' "$up"
+            printf '%s\n' "${relevant[@]}" | sed 's/^[^ ]* /    • /'
+            printf '  Run ./update --port to rebase your custom commits onto %s.\n' "$UPSTREAM_REF"
+        elif [ -n "$up" ]; then
+            printf '\033[1;32m✓\033[0m Upstream Caelestia: %s — housekeeping only, nothing to port.\n' "$up"
+        else
+            printf '\033[1;32m✓\033[0m Level with upstream Caelestia (%s).\n' "$UPSTREAM_REF"
+        fi
+        tag="$(upstream_latest_tag)"
+        if [ -n "$tag" ] && ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+            printf '\033[1;33m!\033[0m Upstream release %s is out and not in your branch.\n' "$tag"
         fi
     fi
 fi

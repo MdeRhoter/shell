@@ -58,7 +58,7 @@ when any of the three ways this setup goes stale has happened:
 |---|---|
 | the installed plugin is behind your HEAD in native code (`plugin/`, `extras/`, `CMakeLists.txt`, `packaging/`) — QML-only commits are already live and do not count | `./update` |
 | the other machine pushed to `origin/<branch>` | `./update` |
-| upstream Caelestia cut a new release tag | `./update --port` |
+| upstream `main` has `feat`/`fix`/`perf` commits your branch lacks (listed in the notification; `chore`/`ci`/`docs` are ignored), or a new release tag | `./update --port` (onto `upstream/main`; `--port --tag` for the latest release instead) |
 | local and `origin` have both moved | `./update` (adopts a port from the other machine by itself; otherwise prints what to run) |
 
 **It only ever reports — it never applies anything.** That is deliberate and not a
