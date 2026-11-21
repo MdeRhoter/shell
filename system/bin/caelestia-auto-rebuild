@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Rebuild + install whatever the pacman drift hook says went stale.
+# Rebuild + install whatever the pacman drift hook says went stale: quickshell,
+# the Caelestia plugin, or an AUR library they link (libcava).
 #
 # The user-side half of system/pacman/quickshell-qt-drift. That hook runs as
 # root inside the transaction and can only detect: makepkg refuses root, and
@@ -75,36 +76,54 @@ done
 mapfile -t wanted < <(grep -v '^[[:space:]]*$' "$REQUEST")
 log "rebuilding: ${wanted[*]}"
 notify normal "Rebuilding the shell" \
-    "A system update left ${wanted[*]} out of date with Qt. Rebuilding in the background; you will be asked for your password to install."
+    "A system update left ${wanted[*]} linked against libraries that are gone. Rebuilding in the background; you will be asked for your password to install."
 
-pkgs=()
+# Build + install one batch of packages with a single pkexec prompt.
+build_and_install() {
+    local name dir pkg rc
+    local -a pkgs=()
+    for name in "$@"; do
+        dir="$(build_dir "$name")"
+        [ -f "$dir/PKGBUILD" ] || fail "No PKGBUILD for $name in $dir (run: yay -S $name)."
+        log "== $name ($dir)"
+        # -f        the version is unchanged by design, and makepkg otherwise refuses
+        #           to rebuild one it already has a tarball for;
+        # --holdver do not move VCS sources: rebuild exactly what was built before;
+        # no -s     resolving missing deps needs root. A dep that vanished is a real
+        #           problem worth a failure notification, not a silent install.
+        ( cd "$dir" && makepkg -f --holdver --noconfirm ) || fail "makepkg failed for $name."
+        # --packagelist prints every package the PKGBUILD would produce; match
+        # on name in case a PKGBUILD ever splits.
+        pkg="$(cd "$dir" && makepkg --packagelist --holdver 2>/dev/null | grep -F "/$name-" | head -1)"
+        [ -f "$pkg" ] || fail "Built $name but could not find its package file."
+        pkgs+=("$pkg")
+    done
+
+    log "installing: ${pkgs[*]}"
+    # No --needed: the version is the same on purpose, and --needed would skip it.
+    # pkexec exits 126 when the dialog is dismissed, 127 when not authorised.
+    pkexec /usr/bin/pacman -U --noconfirm "${pkgs[@]}"
+    rc=$?
+    case "$rc" in
+        0) ;;
+        126|127) fail "Install was not authorised. Built packages are ready: pkexec pacman -U ${pkgs[*]}" ;;
+        *) fail "pacman -U exited $rc." ;;
+    esac
+}
+
+# Libraries (e.g. libcava, 2026-11-21: sndio soname bump) must be INSTALLED
+# before quickshell or the plugin is rebuilt, or those link against the old,
+# broken copy again. So: libraries first as one batch, then the rest. That is a
+# second password prompt only when both kinds are pending at once.
+libs=() top=()
 for name in "${wanted[@]}"; do
-    dir="$(build_dir "$name")"
-    [ -f "$dir/PKGBUILD" ] || fail "No PKGBUILD for $name in $dir (run: yay -S $name)."
-    log "== $name ($dir)"
-    # -f        the version is unchanged by design, and makepkg otherwise refuses
-    #           to rebuild one it already has a tarball for;
-    # --holdver do not move VCS sources: rebuild exactly what was built before;
-    # no -s     resolving missing deps needs root. A dep that vanished is a real
-    #           problem worth a failure notification, not a silent install.
-    ( cd "$dir" && makepkg -f --holdver --noconfirm ) || fail "makepkg failed for $name."
-    # --packagelist prints every package the PKGBUILD would produce; pkgname is
-    # a single package for all three, but match on name to be safe.
-    pkg="$(cd "$dir" && makepkg --packagelist --holdver 2>/dev/null | grep -F "/$name-" | head -1)"
-    [ -f "$pkg" ] || fail "Built $name but could not find its package file."
-    pkgs+=("$pkg")
+    case "$name" in
+        caelestia-shell-fork|quickshell-git) top+=("$name") ;;
+        *) libs+=("$name") ;;
+    esac
 done
-
-log "installing: ${pkgs[*]}"
-# No --needed: the version is the same on purpose, and --needed would skip it.
-# pkexec exits 126 when the dialog is dismissed, 127 when not authorised.
-pkexec /usr/bin/pacman -U --noconfirm "${pkgs[@]}"
-rc=$?
-case "$rc" in
-    0) ;;
-    126|127) fail "Install was not authorised. Built packages are ready: pkexec pacman -U ${pkgs[*]}" ;;
-    *) fail "pacman -U exited $rc." ;;
-esac
+[ "${#libs[@]}" -gt 0 ] && build_and_install "${libs[@]}"
+[ "${#top[@]}" -gt 0 ] && build_and_install "${top[@]}"
 
 if ! systemctl --user is-active --quiet caelestia.service; then
     log "shell was not running; starting it"

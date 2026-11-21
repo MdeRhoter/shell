@@ -566,6 +566,9 @@ SYSTEM_FILES=(
     "system/bin/caelestia-update-check|$HOME/.local/bin/caelestia-update-check|755"
     "system/systemd/caelestia-update-check.service|$HOME/.config/systemd/user/caelestia-update-check.service|644"
     "system/systemd/caelestia-update-check.timer|$HOME/.config/systemd/user/caelestia-update-check.timer|644"
+    "system/bin/caelestia-auto-rebuild|$HOME/.local/bin/caelestia-auto-rebuild|755"
+    "system/systemd/caelestia-auto-rebuild.path|$HOME/.config/systemd/user/caelestia-auto-rebuild.path|644"
+    "system/systemd/caelestia-auto-rebuild.service|$HOME/.config/systemd/user/caelestia-auto-rebuild.service|644"
 )
 
 # Timers that must be running for a vendored unit to do anything. Installing a
@@ -574,8 +577,11 @@ SYSTEM_FILES=(
 # file and never fire there. Kept separate from SYSTEM_FILES because enabling
 # is idempotent-but-not-free: it is checked every run, not just on drift, since
 # a `systemctl --user disable` leaves the file identical and cmp sees nothing.
+# (.path units too: caelestia-auto-rebuild.path is what reacts to the drift
+# hook's rebuild request, and is just as inert until enabled.)
 ENABLE_TIMERS=(
     "caelestia-update-check.timer"
+    "caelestia-auto-rebuild.path"
 )
 
 # Install any vendored system file that is missing or out of date.
