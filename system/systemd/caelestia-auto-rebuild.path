@@ -1,0 +1,19 @@
+[Unit]
+# Fires when the pacman drift hook writes a rebuild request. See
+# system/bin/caelestia-auto-rebuild for what happens next and why it is split
+# across root (detect) and the user session (build + install).
+Description=Watch for a Caelestia/quickshell rebuild request from pacman
+Documentation=file:%h/.config/quickshell/caelestia/system/bin/caelestia-auto-rebuild
+
+[Path]
+# PathChanged, NOT PathExists. A request that stays put because its rebuild
+# failed would make PathExists restart the service the moment it exits, forever.
+# The hook only rewrites the file when its content changes, so this fires once
+# per new problem.
+PathChanged=/var/lib/caelestia-rebuild/request
+Unit=caelestia-auto-rebuild.service
+
+[Install]
+# The install needs a polkit agent and the notifications need a session, so
+# only watch while there is one.
+WantedBy=graphical-session.target

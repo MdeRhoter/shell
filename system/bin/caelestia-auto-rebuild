@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Rebuild + install whatever the pacman drift hook says went stale.
+#
+# The user-side half of system/pacman/quickshell-qt-drift. That hook runs as
+# root inside the transaction and can only detect: makepkg refuses root, and
+# pacman -U cannot run while the transaction holds the db lock. So it writes
+# REQUEST (one package name per line) and caelestia-auto-rebuild.path starts
+# this, which:
+#
+#   1. waits until pacman / yay / makepkg are all gone - the hook fires after
+#      the REPO half of a `yay -Syu`, and yay may still be building AUR
+#      packages, possibly one of these very ones;
+#   2. re-reads REQUEST, because whatever ran in the meantime re-ran the hook
+#      and may have cleared it (yay rebuilt quickshell-git itself);
+#   3. builds each package with makepkg --holdver: the SAME revision that is
+#      installed now, against the new libraries. A rebuild, never an upgrade -
+#      pulling a new quickshell or a new fork commit is ./update's job;
+#   4. installs all of them in ONE `pkexec pacman -U` (one password dialog,
+#      answered by polkit-gnome, which does not depend on the shell running).
+#
+# It does NOT restart a running shell: the running one keeps the old libraries
+# mapped and is fine, and the rebuilt binaries take over at the next restart or
+# login. The one exception is a shell that is already dead (a login after an
+# upgrade that happened with no session to catch it), which gets started again.
+#
+# The install transaction re-runs the drift hook, which removes REQUEST when
+# everything checks out - that, not this script, is what clears it.
+
+set -uo pipefail
+
+REQUEST=/var/lib/caelestia-rebuild/request
+REPO="${CAELESTIA_REPO:-$HOME/.config/quickshell/caelestia}"
+AUR_CACHE="${AUR_CACHE:-$HOME/.cache/yay}"
+# yay -Syu on this box takes 5-30 min; an AUR build queue can take longer. Past
+# this, something is wedged and a notification beats waiting forever.
+WAIT_MAX=$((3 * 3600))
+
+log() { printf '%s\n' "$*"; }
+notify() {
+    # urgency, summary, body. A missing notification daemon must not fail the
+    # rebuild, and the journal has the same text anyway.
+    notify-send -a "Caelestia" -u "$1" "$2" "$3" 2>/dev/null || true
+}
+fail() {
+    log "FAILED: $1"
+    notify critical "Caelestia rebuild failed" \
+        "$1 The running shell is fine, but the next restart or login may break. Details: journalctl --user -u caelestia-auto-rebuild"
+    exit 1
+}
+
+build_dir() {
+    case "$1" in
+        caelestia-shell-fork) printf '%s\n' "$REPO/packaging" ;;
+        *) printf '%s\n' "$AUR_CACHE/$1" ;;
+    esac
+}
+
+busy() {
+    [ -e /var/lib/pacman/db.lck ] && return 0
+    pgrep -x 'pacman|yay|paru|makepkg' >/dev/null
+}
+
+[ -s "$REQUEST" ] || exit 0
+
+waited=0
+while busy; do
+    [ "$waited" -ge "$WAIT_MAX" ] &&
+        fail "Still waiting on a pacman/yay run after $((WAIT_MAX / 3600))h; gave up."
+    sleep 10
+    waited=$((waited + 10))
+done
+
+# Step 2: whatever just finished may have fixed it already.
+[ -s "$REQUEST" ] || { log "request cleared while waiting; nothing to do"; exit 0; }
+mapfile -t wanted < <(grep -v '^[[:space:]]*$' "$REQUEST")
+log "rebuilding: ${wanted[*]}"
+notify normal "Rebuilding the shell" \
+    "A system update left ${wanted[*]} out of date with Qt. Rebuilding in the background; you will be asked for your password to install."
+
+pkgs=()
+for name in "${wanted[@]}"; do
+    dir="$(build_dir "$name")"
+    [ -f "$dir/PKGBUILD" ] || fail "No PKGBUILD for $name in $dir (run: yay -S $name)."
+    log "== $name ($dir)"
+    # -f        the version is unchanged by design, and makepkg otherwise refuses
+    #           to rebuild one it already has a tarball for;
+    # --holdver do not move VCS sources: rebuild exactly what was built before;
+    # no -s     resolving missing deps needs root. A dep that vanished is a real
+    #           problem worth a failure notification, not a silent install.
+    ( cd "$dir" && makepkg -f --holdver --noconfirm ) || fail "makepkg failed for $name."
+    # --packagelist prints every package the PKGBUILD would produce; pkgname is
+    # a single package for all three, but match on name to be safe.
+    pkg="$(cd "$dir" && makepkg --packagelist --holdver 2>/dev/null | grep -F "/$name-" | head -1)"
+    [ -f "$pkg" ] || fail "Built $name but could not find its package file."
+    pkgs+=("$pkg")
+done
+
+log "installing: ${pkgs[*]}"
+# No --needed: the version is the same on purpose, and --needed would skip it.
+# pkexec exits 126 when the dialog is dismissed, 127 when not authorised.
+pkexec /usr/bin/pacman -U --noconfirm "${pkgs[@]}"
+rc=$?
+case "$rc" in
+    0) ;;
+    126|127) fail "Install was not authorised. Built packages are ready: pkexec pacman -U ${pkgs[*]}" ;;
+    *) fail "pacman -U exited $rc." ;;
+esac
+
+if ! systemctl --user is-active --quiet caelestia.service; then
+    log "shell was not running; starting it"
+    systemctl --user reset-failed caelestia.service 2>/dev/null || true
+    systemctl --user start caelestia.service || true
+fi
+
+log "done"
+notify normal "Shell rebuilt" \
+    "${wanted[*]} rebuilt against the new libraries. The running shell keeps going; the rebuild takes over at the next restart or login."
+exit 0

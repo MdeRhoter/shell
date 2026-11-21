@@ -1,0 +1,25 @@
+[Unit]
+Description=Rebuild quickshell / the Caelestia plugin after a library upgrade
+Documentation=file:%h/.config/quickshell/caelestia/system/bin/caelestia-auto-rebuild
+# notify-send and the pkexec dialog both need the session.
+After=graphical-session.target
+ConditionFileIsExecutable=%h/.local/bin/caelestia-auto-rebuild
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/caelestia-auto-rebuild
+# Waiting out a yay run plus a ~10 min compile on 4 cores; the script has its
+# own cap on the wait, and makepkg either finishes or fails.
+TimeoutStartSec=infinity
+# Background work: stay out of the way of whatever you are doing meanwhile.
+Nice=10
+IOSchedulingClass=idle
+# No sandboxing on purpose: makepkg writes to ~/.cache/yay, the repo's
+# packaging/ dir and ccache, and pkexec must be able to escalate. The previous
+# reason not to automate this (sudo has no TTY here) does not apply to pkexec.
+
+[Install]
+# Also run once per login. The .path unit only watches while a session exists,
+# so an upgrade done from a TTY or over ssh would otherwise go unnoticed until
+# the shell died. With no request pending this exits immediately.
+WantedBy=graphical-session.target
