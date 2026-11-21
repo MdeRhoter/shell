@@ -3,6 +3,8 @@ import QtQuick.Layouts
 import Quickshell
 import Caelestia.Config
 import qs.components
+import qs.components.containers
+import qs.components.controls
 import qs.services
 
 ColumnLayout {
@@ -39,15 +41,39 @@ ColumnLayout {
         visible: !Updates.loading && Updates.count > 0
     }
 
-    Repeater {
-        model: ScriptModel {
-            values: Updates.updates
+    // A plain Repeater grew the popout past the screen edge with 200+ updates.
+    // Cap the list at maxRows and scroll the rest.
+    readonly property int maxRows: 20
+    readonly property var lines: Updates.updates.map(u => `${u.name}  ${u.oldVer} \u2192 ${u.newVer}`)
+    readonly property string longestLine: lines.reduce((a, b) => b.length > a.length ? b : a, "")
+
+    TextMetrics {
+        id: lineMetrics
+
+        font: Tokens.font.mono.small
+        text: root.longestLine
+    }
+
+    StyledListView {
+        id: list
+
+        visible: !Updates.loading && Updates.count > 0
+        Layout.preferredWidth: Math.ceil(lineMetrics.advanceWidth) + Tokens.padding.medium
+        Layout.preferredHeight: Math.min(count, root.maxRows) * lineMetrics.height
+        Layout.rightMargin: -Tokens.spacing.small
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        model: root.lines
+
+        StyledScrollBar.vertical: StyledScrollBar {
+            flickable: list
         }
 
-        StyledText {
-            required property var modelData
+        delegate: StyledText {
+            required property string modelData
 
-            text: `${modelData.name}  ${modelData.oldVer} \u2192 ${modelData.newVer}`
+            text: modelData
             font: Tokens.font.mono.small
         }
     }
