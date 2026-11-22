@@ -341,6 +341,21 @@ ColumnLayout {
         }
     }
 
+    // Same as the Bluetooth popout's button: opens the full Network page
+    // (saved networks, forget, autoconnect, hidden networks, details, VPN) in
+    // the detached Nexus. Replaces what nm-applet's tray menu was used for.
+    IconTextButton {
+        Layout.fillWidth: true
+        Layout.topMargin: Tokens.spacing.medium
+        inactiveColour: Colours.palette.m3primaryContainer
+        inactiveOnColour: Colours.palette.m3onPrimaryContainer
+        verticalPadding: Tokens.padding.extraSmall
+        text: Tr.tr("Open settings")
+        icon: "settings"
+
+        onClicked: root.popouts.detachRequested("network")
+    }
+
     Connections {
         function onActiveChanged(): void {
             if (Nmcli.active && root.connectingToSsid === Nmcli.active.ssid) {
