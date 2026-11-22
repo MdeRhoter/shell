@@ -98,6 +98,31 @@ activeWindow → spacer → tray → clock → statusIcons → power
 
 ---
 
+## Network: Caelestia popout only, no nm-applet (both machines)
+
+Until 2026-11-22 the bar showed **two** network icons:
+
+- **Top, in the tray:** `nm-applet --indicator`, NetworkManager's own applet. Caelestia draws its menu with the generic tray-menu popout, and it was unusable: it closed when the pointer left on a diagonal and folded back while you navigated. The shell keeps a tray menu open only while a submenu is open, and nm-applet rebuilds its whole menu whenever the Wi-Fi list changes, which throws away any open submenu.
+- **Bottom, above battery/Bluetooth:** Caelestia's own `StatusIcons` network icon with `modules/bar/popouts/Network.qml`. It's stable, but it had no way to reach the advanced options.
+
+**Decision:** keep Caelestia's popout and retire nm-applet.
+
+- The popout now has an **Open settings** button (commit `d630444a`, same pattern as the Bluetooth popout). It calls `popouts.detachRequested("network")`, which opens the Nexus **Network** page: saved networks, forget, autoconnect, hidden networks, connection details and VPN providers. `Wrapper.qml` already mapped `"network"` to that page; only the button was missing.
+- nm-applet's autostart is commented out in `~/.config/hypr/hyprland.lua`. **That file is not in this repo, so make the edit on each machine by hand:**
+
+  ```lua
+  -- hl.exec_cmd("nm-applet --indicator")                       -- replaced by the Caelestia network popout (2026-11-22)
+  ```
+
+  Then run `pkill nm-applet`, or log in again. `/etc/xdg/autostart/nm-applet.desktop` also exists, but Hyprland does not run XDG autostart entries, so leave it alone.
+- Keep the `nm-connection-editor` package (a separate package from `network-manager-applet`): it covers anything the Nexus page cannot do. `network-manager-applet` can stay installed too; it does nothing while it isn't started.
+
+**What nm-applet did that nothing does now:** it was NetworkManager's *secret agent*. When NetworkManager itself needs a password (an auto-connect whose saved key has changed), nothing prompts any more; the auto-connect just fails. Reconnect from the popout, which asks for the password itself. That is acceptable here: every saved Wi-Fi profile uses a plain password or none (no WPA2-Enterprise/802.1x), and there are no NetworkManager VPN profiles (Caelestia's VPN toggle uses its own providers). If that ever changes, revisit this.
+
+**Symptom it came back:** a second network icon in the tray. Check `pgrep -af nm-applet` to see what started it.
+
+---
+
 ## Locking workflow
 Session locking is handled by **Caelestia's built-in `WlSessionLock`** (in `modules/lock/Lock.qml`), not by a separate hyprlock process. All lock/unlock operations go through Quickshell IPC.
 **`lock_cmd = qs ipc -p ~/.config/quickshell/caelestia/shell.qml call lock lock`**
